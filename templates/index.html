@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+<meta charset="UTF-8">
+<title>paycheck-sentinel</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<h1>paycheck-sentinel
+  <span class="sub">Analiza transakcija: povrati od banke, duplikati i neuobičajeni iznosi. Backend: Flask + SQLite — istorija se čuva lokalno.</span>
+</h1>
+
+<div class="panel" id="historyPanel">
+  <h2>Istorija upload-a</h2>
+  <div class="table-wrap" style="max-height:220px;">
+    <table>
+      <thead><tr><th>ID</th><th>Naziv</th><th>Datum</th><th>Redova</th><th>Analizirano</th><th>Upozorenja</th><th></th></tr></thead>
+      <tbody id="historyBody"><tr><td colspan="7" class="muted">Nema još učitanih fajlova.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" id="uploadPanel">
+  <h2>1. Učitaj XML fajl(ove)</h2>
+  <div class="dropzone" id="dropzone">
+    <div id="dzText">Prevuci jedan ili više XML fajlova ovde (ili ceo folder) ili klikni da izabereš</div>
+    <input type="file" id="fileInput" accept=".xml,text/xml,application/xml" multiple>
+  </div>
+  <div class="err hidden" id="parseErr"></div>
+</div>
+
+<div class="panel hidden" id="mapPanel">
+  <h2>2. Odaberi mod analize</h2>
+  <div class="row" style="margin-bottom:16px;">
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <input type="radio" name="analysisMode" value="generic" id="modeGeneric" checked> Standardno (dve kolone: plaćeno/vraćeno)
+    </label>
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <input type="radio" name="analysisMode" value="bank" id="modeBank"> Bankovni izvod (iBank — debit/credit + ref. broj)
+    </label>
+  </div>
+
+  <div id="genericMapping">
+    <h2>Mapiraj kolone <span class="muted" id="batchLabel"></span></h2>
+    <div class="row">
+      <div class="field">
+        <label>Plaćeno banci <span style="color:var(--coral)">*</span></label>
+        <select id="colPaid"></select>
+      </div>
+      <div class="field">
+        <label>Banka uplatila meni <span style="color:var(--coral)">*</span></label>
+        <select id="colReturned"></select>
+      </div>
+      <div class="field">
+        <label>Broj naloga / ID (opciono)</label>
+        <select id="colId"></select>
+      </div>
+      <div class="field">
+        <label>Dužnik / Platilac (opciono)</label>
+        <select id="colDebtor"></select>
+      </div>
+      <div class="field">
+        <label>Datum (opciono)</label>
+        <select id="colDate"></select>
+      </div>
+    </div>
+
+    <h2 style="margin-top:20px;">Odaberi provere</h2>
+    <div class="checks-grid">
+      <div class="check-card" id="cardFull">
+        <label class="title"><input type="checkbox" id="checkFull" checked> Pun povrat od banke</label>
+        <div class="desc">Iznos "plaćeno banci" se tačno poklapa sa "banka uplatila meni" — dužnik je verovatno platio na pogrešan račun, pa je banka vratila novac.</div>
+        <div class="extra">
+          <label>Tolerancija (din):</label>
+          <input type="number" id="tolerance" value="0" step="0.01" min="0">
+        </div>
+      </div>
+
+      <div class="check-card" id="cardPartial">
+        <label class="title"><input type="checkbox" id="checkPartial" checked> Delimičan povrat</label>
+        <div class="desc">Banka je vratila deo iznosa (manje od punog "plaćeno banci") — informativno, vredi proveriti ručno.</div>
+      </div>
+
+      <div class="check-card" id="cardDupId">
+        <label class="title"><input type="checkbox" id="checkDupId"> Duplikat broja naloga</label>
+        <div class="desc">Isti broj naloga/ID se pojavljuje više puta — moguća greška u unosu ili duplo knjiženje. Zahteva mapiranu kolonu "Broj naloga / ID".</div>
+      </div>
+
+      <div class="check-card" id="cardDupPay">
+        <label class="title"><input type="checkbox" id="checkDupPay"> Duplikat uplate</label>
+        <div class="desc">Isti dužnik, isti iznos i isti datum se ponavljaju — moguća duplirana uplata. Zahteva mapirane kolone "Dužnik" i "Datum".</div>
+      </div>
+
+      <div class="check-card" id="cardOutlier">
+        <label class="title"><input type="checkbox" id="checkOutlier"> Neuobičajen iznos (outlier)</label>
+        <div class="desc">Iznos "plaćeno banci" mnogo je veći od medijane svih uplata — moguća greška u unosu ili nešto sumnjivo.</div>
+        <div class="extra">
+          <label>Prag (x medijana):</label>
+          <input type="number" id="outlierMultiplier" value="5" step="0.5" min="1.5">
+        </div>
+      </div>
+    </div>
+
+    <button id="analyzeBtn">Analiziraj</button>
+  </div>
+
+  <div id="bankMapping" class="hidden">
+    <h2>Mapiraj kolone <span class="muted" id="batchLabelBank"></span></h2>
+    <div class="footer-note" id="ownAccountNote" style="margin-bottom:10px;"></div>
+    <div class="row">
+      <div class="field">
+        <label>Iznos <span style="color:var(--coral)">*</span></label>
+        <select id="colAmount"></select>
+      </div>
+      <div class="field">
+        <label>Smer (debit/credit) <span style="color:var(--coral)">*</span></label>
+        <select id="colBenefit"></select>
+      </div>
+      <div class="field">
+        <label>Broj naloga / ref (preporučeno)</label>
+        <select id="colRef"></select>
+      </div>
+      <div class="field">
+        <label>Datum</label>
+        <select id="colDateBank"></select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div class="field">
+        <label>Vrednost za "odliv" (debit)</label>
+        <input type="text" id="debitValue" value="debit" style="width:140px;">
+      </div>
+      <div class="field">
+        <label>Vrednost za "priliv" (credit)</label>
+        <input type="text" id="creditValue" value="credit" style="width:140px;">
+      </div>
+      <div class="field">
+        <label>Prozor za fallback poklapanje (dana)</label>
+        <input type="number" id="maxDaysGap" value="30" step="1" min="0" style="width:140px;">
+      </div>
+      <div class="field" style="justify-content:flex-end;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="requireRefnumber"> Samo sigurna poklapanja (po ref. broju)
+        </label>
+      </div>
+    </div>
+    <div class="desc muted" style="margin:10px 0;">
+      Otkriva kada odliv (debit) sa računa i priliv (credit) istog iznosa nazad na isti račun čine par —
+      znak da je banka vratila novac. Poklapanje po broju naloga (ref) je pouzdano; ako fali, koristi se
+      fallback po istom iznosu unutar zadatog broja dana (manje pouzdano, drugačije obeleženo).
+    </div>
+    <button id="analyzeBankBtn">Analiziraj</button>
+  </div>
+
+  <div class="footer-note">Detektovano redova: <span id="rowCount">0</span> · Detektovane kolone: <span id="colCount">0</span></div>
+</div>
+
+<div class="panel hidden" id="resultsPanel">
+  <h2>4. Rezultati</h2>
+  <div class="stats">
+    <div class="stat neutral"><div class="n" id="statTotal">0</div><div class="l">Ukupno redova</div></div>
+    <div class="stat warn"><div class="n" id="statAny">0</div><div class="l">Redova sa upozorenjem</div></div>
+    <div class="stat warn"><div class="n" id="statFull">0</div><div class="l">Pun povrat</div></div>
+    <div class="stat warn"><div class="n" id="statSum">0</div><div class="l">Iznos punog povrata</div></div>
+  </div>
+  <div class="legend">
+    <span><span class="badge full">PUN POVRAT</span> tačno poklapanje</span>
+    <span><span class="badge partial">DELIMIČAN</span> delimičan povrat</span>
+    <span><span class="badge dupid">DUP. ID</span> dupli broj naloga</span>
+    <span><span class="badge duppay">DUP. UPLATA</span> ista uplata ponovljena</span>
+    <span><span class="badge outlier">OUTLIER</span> neuobičajen iznos</span>
+  </div>
+  <div class="row" style="margin-bottom:14px;">
+    <button class="secondary" id="exportFlaggedBtn">Izvezi upozorenja (CSV)</button>
+    <button class="secondary" id="exportAllBtn">Izvezi sve (CSV)</button>
+    <button class="secondary" id="exportFlaggedPdfBtn">Izvezi upozorenja (PDF)</button>
+    <button class="secondary" id="exportFullPdfBtn">Izvezi samo pun povrat (PDF)</button>
+    <button class="secondary" id="exportAllPdfBtn">Izvezi sve (PDF)</button>
+    <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); cursor:pointer;">
+      <input type="checkbox" id="onlyFlagged"> Prikaži samo redove sa upozorenjem
+    </label>
+  </div>
+  <div class="table-wrap">
+    <table id="resultsTable">
+      <thead><tr id="theadRow"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<footer style="text-align:center; color:var(--muted); font-size:11px; margin-top:24px; padding-top:14px; border-top:1px solid var(--border);">
+  Developed by Zeljko Tripcevski
+</footer>
+</body>
+</html>

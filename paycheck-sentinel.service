@@ -1,0 +1,16 @@
+[Unit]
+# Developed by Zeljko Tripcevski
+Description=paycheck-sentinel Flask app
+After=network.target
+
+[Service]
+Type=simple
+# Prilagodi User i WorkingDirectory tvojoj instalaciji na serveru
+User=zeljko
+WorkingDirectory=/home/zeljko/paycheck-sentinel-flask
+ExecStart=/home/zeljko/paycheck-sentinel-flask/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
