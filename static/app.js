@@ -3,6 +3,10 @@ let currentColumns = [];
 let currentRows = [];
 let currentFlaggedRows = [];
 let currentOwnAccount = null;
+let currentMode = "generic";
+let sortCol = null;
+let sortDir = 1;
+let searchQuery = "";
 const NONE = "__NONE__";
 
 document.querySelectorAll('input[name="analysisMode"]').forEach(radio => {
@@ -233,13 +237,9 @@ async function runBankAnalysis() {
     }
 
     currentRows = data.rows;
+    currentMode = "bank";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
-    renderResults({
-      total: data.stats.total,
-      flagged_count: data.stats.flagged_count,
-      full_count: data.stats.confirmed_count,
-      full_sum: data.stats.confirmed_sum,
-    });
+    renderResults();
     loadHistory();
   } catch (err) {
     showErr("Greška u komunikaciji sa serverom: " + err.message);
@@ -287,33 +287,120 @@ async function runAnalysis() {
     }
 
     currentRows = data.rows;
+    currentMode = "generic";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
-    renderResults(data.stats);
+    renderResults();
     loadHistory();
   } catch (err) {
     showErr("Greška u komunikaciji sa serverom: " + err.message);
   }
 }
 
-function renderResults(stats) {
+function computeClientStats(rows) {
+  const active = rows.filter(r => !r.is_false_alarm);
+  const flagged = active.filter(r => r.flags.length > 0);
+  const fullType = currentMode === "bank" ? "circular_confirmed" : "full";
+  const fullRows = active.filter(r => r.flags.some(f => f.type === fullType));
+  let fullSum = fullRows.reduce((acc, r) => acc + (r.paid_amount || 0), 0);
+  if (currentMode === "bank") fullSum = fullSum / 2; // par se racuna 2x (debit+credit)
+  return {
+    total: rows.length,
+    flagged_count: flagged.length,
+    full_count: fullRows.length,
+    full_sum: fullSum,
+  };
+}
+
+function getSortValue(r, col) {
+  if (col === "__idx") return r.idx;
+  if (col === "__source") return r.raw.__source_file || "";
+  if (col === "__flags") return r.flags.map(f => f.label).join(", ");
+  if (col === "__falsealarm") return r.is_false_alarm ? 1 : 0;
+  return r.raw[col] ?? "";
+}
+
+function compareValues(a, b) {
+  const na = parseFloat(String(a).replace(",", "."));
+  const nb = parseFloat(String(b).replace(",", "."));
+  const aIsNum = !isNaN(na) && String(a).trim() !== "";
+  const bIsNum = !isNaN(nb) && String(b).trim() !== "";
+  if (aIsNum && bIsNum) return na - nb;
+  return String(a).localeCompare(String(b), "sr");
+}
+
+function setSort(col) {
+  if (sortCol === col) {
+    sortDir = -sortDir;
+  } else {
+    sortCol = col;
+    sortDir = 1;
+  }
+  renderResults();
+}
+window.setSort = setSort;
+
+function toggleFalseAlarm(rowIdx, checked) {
+  const row = currentRows.find(r => r.idx === rowIdx);
+  if (row) row.is_false_alarm = checked;
+  renderResults();
+  if (!currentBatchId) return;
+  fetch(`/api/batches/${currentBatchId}/false_alarm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ row_index: rowIdx, value: checked }),
+  }).catch(() => { /* tiho ignorisi - lokalni prikaz je vec azuriran */ });
+}
+window.toggleFalseAlarm = toggleFalseAlarm;
+
+function renderResults() {
   const onlyFlagged = document.getElementById("onlyFlagged").checked;
   const theadRow = document.getElementById("theadRow");
   const tbody = document.getElementById("tbody");
 
-  theadRow.innerHTML = "<th>#</th><th>Izvorni fajl</th>" +
-    currentColumns.map(c => `<th>${escapeHtml(c)}</th>`).join("") + "<th>Upozorenja</th>";
+  const colDefs = [
+    { key: "__idx", label: "#" },
+    { key: "__source", label: "Izvorni fajl" },
+    ...currentColumns.map(c => ({ key: c, label: c })),
+    { key: "__flags", label: "Upozorenja" },
+    { key: "__falsealarm", label: "Lažna uzbuna" },
+  ];
 
-  const toShow = onlyFlagged ? currentFlaggedRows : currentRows;
+  theadRow.innerHTML = colDefs.map(cd => {
+    const arrow = sortCol === cd.key ? `<span class="sort-arrow">${sortDir === 1 ? "▲" : "▼"}</span>` : "";
+    return `<th onclick="setSort('${cd.key.replace(/'/g, "\\'")}')">${escapeHtml(cd.label)}${arrow}</th>`;
+  }).join("");
+
+  let toShow = onlyFlagged ? currentRows.filter(r => r.flags.length > 0) : currentRows;
+
+  if (searchQuery.trim() !== "") {
+    const q = searchQuery.trim().toLowerCase();
+    toShow = toShow.filter(r => {
+      const haystack = [
+        r.raw.__source_file || "",
+        ...currentColumns.map(c => r.raw[c] ?? ""),
+        r.flags.map(f => f.label).join(" "),
+      ].join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  if (sortCol) {
+    toShow = [...toShow].sort((a, b) => compareValues(getSortValue(a, sortCol), getSortValue(b, sortCol)) * sortDir);
+  }
+
   tbody.innerHTML = toShow.map(r => {
     const cells = currentColumns.map(c => `<td>${escapeHtml(r.raw[c] ?? "")}</td>`).join("");
     const badges = r.flags.length
       ? r.flags.map(f => `<span class="badge ${f.type}">${f.label}</span>`).join("")
       : '<span class="badge ok">OK</span>';
     const isFull = r.flags.some(f => f.type === "full" || f.type === "circular_confirmed");
-    const rowClass = isFull ? "flagged-full" : (r.flags.length ? "flagged-warn" : "");
-    return `<tr class="${rowClass}"><td>${r.idx + 1}</td><td>${escapeHtml(r.raw.__source_file ?? "")}</td>${cells}<td>${badges}</td></tr>`;
+    let rowClass = isFull ? "flagged-full" : (r.flags.length ? "flagged-warn" : "");
+    if (r.is_false_alarm) rowClass += " false-alarm";
+    const checkboxCell = `<td class="no-strike"><input type="checkbox" ${r.is_false_alarm ? "checked" : ""} onchange="toggleFalseAlarm(${r.idx}, this.checked)"></td>`;
+    return `<tr class="${rowClass}"><td>${r.idx + 1}</td><td>${escapeHtml(r.raw.__source_file ?? "")}</td>${cells}<td>${badges}</td>${checkboxCell}</tr>`;
   }).join("");
 
+  const stats = computeClientStats(currentRows);
   document.getElementById("statTotal").textContent = stats.total;
   document.getElementById("statAny").textContent = stats.flagged_count;
   document.getElementById("statFull").textContent = stats.full_count;
@@ -323,16 +410,12 @@ function renderResults(stats) {
 }
 
 document.getElementById("onlyFlagged").addEventListener("change", () => {
-  if (currentRows.length) {
-    const stats = {
-      total: currentRows.length,
-      flagged_count: currentFlaggedRows.length,
-      full_count: currentRows.filter(r => r.flags.some(f => f.type === "full")).length,
-      full_sum: currentRows.filter(r => r.flags.some(f => f.type === "full"))
-        .reduce((acc, r) => acc + (r.paid_amount || 0), 0),
-    };
-    renderResults(stats);
-  }
+  if (currentRows.length) renderResults();
+});
+
+document.getElementById("searchBox").addEventListener("input", (e) => {
+  searchQuery = e.target.value;
+  if (currentRows.length) renderResults();
 });
 
 function escapeHtml(s) {
@@ -406,6 +489,7 @@ async function openBatch(batchId) {
   currentBatchId = batchId;
   currentColumns = data.batch.columns_json;
   currentRows = data.rows;
+  currentMode = data.batch.mode === "bank_statement" ? "bank" : "generic";
   currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
 
   document.getElementById("rowCount").textContent = data.batch.row_count;
@@ -433,7 +517,7 @@ async function openBatch(batchId) {
   document.getElementById("mapPanel").classList.remove("hidden");
 
   if (data.batch.analyzed) {
-    renderResults(data.stats);
+    renderResults();
   } else {
     document.getElementById("resultsPanel").classList.add("hidden");
   }

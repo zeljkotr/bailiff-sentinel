@@ -156,7 +156,16 @@ th{
   position:sticky;
   top:0;
   background:var(--panel);
+  cursor:pointer;
+  user-select:none;
+  white-space:nowrap;
 }
+th:hover{color:var(--amber-bright);}
+th .sort-arrow{font-size:9px; margin-left:3px; opacity:.7;}
+tr.false-alarm{opacity:.45;}
+tr.false-alarm td{text-decoration:line-through;}
+tr.false-alarm td:last-child, tr.false-alarm td.no-strike{text-decoration:none;}
+#searchBox{min-width:280px;}
 tr.flagged-full{background:rgba(240,96,92,.16);}
 tr.flagged-full td:first-child{border-left:3px solid var(--coral);}
 tr.flagged-warn{background:rgba(212,160,23,.16);}

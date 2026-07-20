@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     paid_amount REAL,
     returned_amount REAL,
     flags_json TEXT DEFAULT '[]',
+    is_false_alarm INTEGER DEFAULT 0,
     FOREIGN KEY(batch_id) REFERENCES batches(id) ON DELETE CASCADE
 );
 
@@ -101,6 +102,13 @@ def _migrate_batches_table(conn):
     conn.commit()
 
 
+def _migrate_transactions_table(conn):
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()}
+    if "is_false_alarm" not in existing:
+        conn.execute("ALTER TABLE transactions ADD COLUMN is_false_alarm INTEGER DEFAULT 0")
+    conn.commit()
+
+
 def get_db(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -113,6 +121,7 @@ def init_db(db_path):
     conn.executescript(SCHEMA)
     conn.commit()
     _migrate_batches_table(conn)
+    _migrate_transactions_table(conn)
     conn.close()
 
 
@@ -170,8 +179,17 @@ def get_transactions(conn, batch_id):
             "paid_amount": r["paid_amount"],
             "returned_amount": r["returned_amount"],
             "flags": json.loads(r["flags_json"]),
+            "is_false_alarm": bool(r["is_false_alarm"]),
         })
     return result
+
+
+def set_false_alarm(conn, batch_id, row_index, value):
+    conn.execute(
+        "UPDATE transactions SET is_false_alarm=? WHERE batch_id=? AND row_index=?",
+        (int(bool(value)), batch_id, row_index),
+    )
+    conn.commit()
 
 
 def save_bank_analysis(conn, batch_id, mapping, options, analyzed_txns):

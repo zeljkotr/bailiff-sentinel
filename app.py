@@ -206,11 +206,13 @@ def api_analyze_bank(batch_id):
 
     db.save_bank_analysis(conn, batch_id, mapping, options, analyzed)
 
-    total = len(analyzed)
-    flagged = [t for t in analyzed if t["flags"]]
-    confirmed = [t for t in analyzed if any(f["type"] == "circular_confirmed" for f in t["flags"])]
-    possible = [t for t in analyzed if any(f["type"] == "circular_possible" for f in t["flags"])]
-    sum_confirmed = sum(t["amount"] or 0 for t in confirmed) / 2  # svaki par broji se 2x (debit+credit)
+    refreshed = db.get_transactions(conn, batch_id)
+    active = [t for t in refreshed if not t.get("is_false_alarm")]
+    total = len(refreshed)
+    flagged = [t for t in active if t["flags"]]
+    confirmed = [t for t in active if any(f["type"] == "circular_confirmed" for f in t["flags"])]
+    possible = [t for t in active if any(f["type"] == "circular_possible" for f in t["flags"])]
+    sum_confirmed = sum(t["paid_amount"] or 0 for t in confirmed) / 2  # svaki par broji se 2x (debit+credit)
 
     stats = {
         "total": total,
@@ -220,12 +222,24 @@ def api_analyze_bank(batch_id):
         "confirmed_sum": round(sum_confirmed, 2),
     }
 
-    # preimenuj 'amount' -> 'paid_amount' za konzistentnost sa frontend renderovanjem
-    for t in analyzed:
-        t["paid_amount"] = t["amount"]
-        t["returned_amount"] = None
+    return jsonify({"rows": refreshed, "stats": stats})
 
-    return jsonify({"rows": analyzed, "stats": stats})
+
+@app.route("/api/batches/<int:batch_id>/false_alarm", methods=["POST"])
+def api_set_false_alarm(batch_id):
+    conn = get_conn()
+    batch = db.get_batch(conn, batch_id)
+    if not batch:
+        return jsonify({"error": "Batch nije pronadjen."}), 404
+
+    body = request.get_json(force=True)
+    row_index = body.get("row_index")
+    value = body.get("value", True)
+    if row_index is None:
+        return jsonify({"error": "Nedostaje row_index."}), 400
+
+    db.set_false_alarm(conn, batch_id, row_index, value)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/batches/<int:batch_id>/analyze", methods=["POST"])
@@ -261,8 +275,9 @@ def api_analyze(batch_id):
 
     db.save_analysis(conn, batch_id, mapping, options, analyzed)
 
-    stats = _compute_stats(analyzed)
-    return jsonify({"rows": analyzed, "stats": stats})
+    refreshed = db.get_transactions(conn, batch_id)
+    stats = _compute_stats(refreshed)
+    return jsonify({"rows": refreshed, "stats": stats})
 
 
 @app.route("/api/batches/<int:batch_id>/results", methods=["GET"])
@@ -291,7 +306,7 @@ def api_export_csv(batch_id):
     columns = _json_or_empty(batch["columns_json"])
 
     if only_flagged:
-        txns = [t for t in txns if t["flags"]]
+        txns = [t for t in txns if t["flags"] and not t.get("is_false_alarm")]
 
     buf = io.StringIO()
     buf.write("\ufeff")
@@ -325,15 +340,16 @@ def api_export_pdf(batch_id):
     full_flag_type = "circular_confirmed" if mode == "bank_statement" else "full"
 
     if only_full:
-        txns = [t for t in txns if any(f["type"] == full_flag_type for f in t["flags"])]
+        txns = [t for t in txns if any(f["type"] == full_flag_type for f in t["flags"]) and not t.get("is_false_alarm")]
     elif only_flagged:
-        txns = [t for t in txns if t["flags"]]
+        txns = [t for t in txns if t["flags"] and not t.get("is_false_alarm")]
 
     if mode == "bank_statement":
-        full_rows = [t for t in txns if any(f["type"] == "circular_confirmed" for f in t["flags"])]
+        all_txns = db.get_transactions(conn, batch_id)
+        full_rows = [t for t in all_txns if any(f["type"] == "circular_confirmed" for f in t["flags"]) and not t.get("is_false_alarm")]
         stats = {
-            "total": len(db.get_transactions(conn, batch_id)),
-            "flagged_count": len([t for t in db.get_transactions(conn, batch_id) if t["flags"]]),
+            "total": len(all_txns),
+            "flagged_count": len([t for t in all_txns if t["flags"] and not t.get("is_false_alarm")]),
             "confirmed_count": len(full_rows),
             "confirmed_sum": round(sum((t["paid_amount"] or 0) for t in full_rows) / 2, 2) if full_rows else 0,
         }
@@ -357,8 +373,8 @@ def _json_or_empty(s):
 
 def _compute_stats(txns):
     total = len(txns)
-    flagged = [t for t in txns if t["flags"]]
-    full = [t for t in txns if any(f["type"] == "full" for f in t["flags"])]
+    flagged = [t for t in txns if t["flags"] and not t.get("is_false_alarm")]
+    full = [t for t in txns if any(f["type"] == "full" for f in t["flags"]) and not t.get("is_false_alarm")]
     sum_full = sum(t["paid_amount"] or 0 for t in full)
     return {
         "total": total,
