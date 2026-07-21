@@ -31,10 +31,10 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-      - name: Deploy to meshcorers
+     - name: Deploy to meshcorers
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
-            "cd ~/bailiff-sentinel && git pull && pip install -r requirements.txt && sudo systemctl restart paycheck-sentinel"
+            "cd ~/bailiff-sentinel && git pull && venv/bin/pip install -r requirements.txt && sudo systemctl restart paycheck-sentinel"
       - name: Health check
         run: |
           sleep 3
