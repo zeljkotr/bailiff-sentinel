@@ -16,22 +16,6 @@
   </span>
 </h1>
 
-<div class="stepper" id="stepper">
-  <div class="step" data-step="1">
-    <span class="step-num">1</span>
-    <span class="step-label">Učitaj fajl</span>
-  </div>
-  <div class="step-line" id="line1"></div>
-  <div class="step" data-step="2">
-    <span class="step-num">2</span>
-    <span class="step-label">Podesi analizu</span>
-  </div>
-  <div class="step-line" id="line2"></div>
-  <div class="step" data-step="3">
-    <span class="step-num">3</span>
-    <span class="step-label">Rezultati</span>
-  </div>
-</div>
 
 <details class="panel" id="historyPanel">
   <summary>
@@ -45,7 +29,12 @@
     <div class="table-wrap" style="max-height:220px;">
       <table>
         <thead><tr><th>ID</th><th>Naziv</th><th>Datum</th><th>Redova</th><th>Analizirano</th><th>Upozorenja</th><th></th></tr></thead>
-        <tbody id="historyBody"><tr><td colspan="7" class="muted">Nema još učitanih fajlova.</td></tr></tbody>
+        <tbody id="historyBody"><tr><td colspan="7">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          Nema još učitanih fajlova.
+        </div>
+      </td></tr></tbody>
       </table>
     </div>
   </div>
@@ -257,6 +246,23 @@
     </button>
   </div>
 
+  <div class="stepper" id="stepper">
+    <div class="step" data-step="1">
+      <span class="step-num">1</span>
+      <span class="step-label">Učitaj fajl</span>
+    </div>
+    <div class="step-line" id="line1"></div>
+    <div class="step" data-step="2">
+      <span class="step-num">2</span>
+      <span class="step-label">Podesi analizu</span>
+    </div>
+    <div class="step-line" id="line2"></div>
+    <div class="step" data-step="3">
+      <span class="step-num">3</span>
+      <span class="step-label">Rezultati</span>
+    </div>
+  </div>
+
   <div class="footer-note">Detektovano redova: <span id="rowCount">0</span> · Detektovane kolone: <span id="colCount">0</span></div>
 </div>
 
@@ -280,27 +286,32 @@
   </div>
   <div class="toolbar">
     <div class="toolbar-group">
-      <span class="toolbar-label">Izvoz</span>
-      <button class="secondary" id="exportFlaggedBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-        Upozorenja (CSV)
-      </button>
-      <button class="secondary" id="exportAllBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-        Sve (CSV)
-      </button>
-      <button class="secondary" id="exportFlaggedPdfBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
-        Upozorenja (PDF)
-      </button>
-      <button class="secondary" id="exportFullPdfBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
-        Samo pun povrat (PDF)
-      </button>
-      <button class="secondary" id="exportAllPdfBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
-        Sve (PDF)
-      </button>
+      <span class="toolbar-label">Izvoz CSV</span>
+      <div class="btn-group">
+        <button class="secondary" id="exportFlaggedBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+          Upozorenja
+        </button>
+        <button class="secondary" id="exportAllBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+          Sve
+        </button>
+      </div>
+      <span class="toolbar-label">Izvoz PDF</span>
+      <div class="btn-group">
+        <button class="secondary" id="exportFlaggedPdfBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+          Upozorenja
+        </button>
+        <button class="secondary" id="exportFullPdfBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+          Samo pun povrat
+        </button>
+        <button class="secondary" id="exportAllPdfBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+          Sve
+        </button>
+      </div>
     </div>
     <label class="checkbox-pill">
       <input type="checkbox" id="onlyFlagged"> Prikaži samo redove sa upozorenjem

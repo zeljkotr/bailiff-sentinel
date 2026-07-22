@@ -109,6 +109,7 @@ async function uploadFiles(fileListRaw) {
     populateColumnSelectors(data.columns);
     populateBankColumnSelectors(data.columns);
     document.getElementById("mapPanel").classList.remove("hidden");
+    document.getElementById("mapPanel").classList.add("fade-in");
     document.getElementById("resultsPanel").classList.add("hidden");
     setStep(2);
 
@@ -424,7 +425,10 @@ function renderResults() {
   document.getElementById("statFull").textContent = stats.full_count;
   document.getElementById("statSum").textContent = stats.full_sum.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  document.getElementById("resultsPanel").classList.remove("hidden");
+  const resultsPanel = document.getElementById("resultsPanel");
+  const wasHidden = resultsPanel.classList.contains("hidden");
+  resultsPanel.classList.remove("hidden");
+  if (wasHidden) resultsPanel.classList.add("fade-in");
 }
 
 document.getElementById("onlyFlagged").addEventListener("change", () => {
@@ -472,7 +476,12 @@ async function loadHistory() {
     const tbody = document.getElementById("historyBody");
 
     if (!batches.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">Nema još učitanih fajlova.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="7">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          Nema još učitanih fajlova.
+        </div>
+      </td></tr>`;
       return;
     }
 
