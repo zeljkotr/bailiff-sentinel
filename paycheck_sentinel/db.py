@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS batches (
     max_days_gap REAL DEFAULT 30,
     require_refnumber INTEGER DEFAULT 0,
 
+    from_col TEXT,
+    to_col TEXT,
+    account_from TEXT,
+    account_to TEXT,
+
     analyzed INTEGER DEFAULT 0,
     flagged_count INTEGER DEFAULT 0
 );
@@ -87,6 +92,10 @@ EXPECTED_BATCH_COLUMNS = {
     "credit_value": "TEXT DEFAULT 'credit'",
     "max_days_gap": "REAL DEFAULT 30",
     "require_refnumber": "INTEGER DEFAULT 0",
+    "from_col": "TEXT",
+    "to_col": "TEXT",
+    "account_from": "TEXT",
+    "account_to": "TEXT",
     "analyzed": "INTEGER DEFAULT 0",
     "flagged_count": "INTEGER DEFAULT 0",
 }
@@ -216,6 +225,35 @@ def save_bank_analysis(conn, batch_id, mapping, options, analyzed_txns):
                WHERE batch_id=? AND row_index=?""",
             (
                 t["amount"],
+                json.dumps(t["flags"], ensure_ascii=False),
+                batch_id, t["idx"],
+            ),
+        )
+    conn.commit()
+
+
+def save_transfer_analysis(conn, batch_id, mapping, options, analyzed_txns):
+    conn.execute(
+        """UPDATE batches SET
+             mode='transfer',
+             from_col=?, to_col=?, amount_col=?, date_col=?,
+             account_from=?, account_to=?,
+             analyzed=1, flagged_count=?
+           WHERE id=?""",
+        (
+            mapping.get("from_col"), mapping.get("to_col"), mapping.get("amount_col"), mapping.get("date_col"),
+            options.get("account_from", ""), options.get("account_to", ""),
+            sum(1 for t in analyzed_txns if t["flags"]),
+            batch_id,
+        ),
+    )
+
+    for t in analyzed_txns:
+        conn.execute(
+            """UPDATE transactions SET paid_amount=?, flags_json=?
+               WHERE batch_id=? AND row_index=?""",
+            (
+                t["paid_amount"],
                 json.dumps(t["flags"], ensure_ascii=False),
                 batch_id, t["idx"],
             ),

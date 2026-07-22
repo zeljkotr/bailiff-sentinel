@@ -11,11 +11,12 @@ Developed by Zeljko Tripcevski
 import csv
 import io
 import os
+import time
 
 from flask import Flask, jsonify, render_template, request, send_file, g
 
 from paycheck_sentinel import db
-from paycheck_sentinel.checks import analyze, analyze_circular_refund
+from paycheck_sentinel.checks import analyze, analyze_circular_refund, analyze_transfer
 from paycheck_sentinel.pdf_export import build_pdf_report
 from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
 
@@ -63,6 +64,18 @@ def handle_any_error(e):
     # da frontend ne pukne na "Unexpected token '<'"
     app.logger.exception("Neuhvacena greska")
     return jsonify({"error": f"Neočekivana greška na serveru: {type(e).__name__}: {e}"}), 500
+
+
+@app.context_processor
+def inject_versioned_static():
+    def versioned_static(filename):
+        path = os.path.join(app.static_folder, filename)
+        try:
+            v = int(os.path.getmtime(path))
+        except OSError:
+            v = int(time.time())
+        return f"/static/{filename}?v={v}"
+    return dict(versioned_static=versioned_static)
 
 
 @app.route("/")
@@ -225,6 +238,50 @@ def api_analyze_bank(batch_id):
     return jsonify({"rows": refreshed, "stats": stats})
 
 
+@app.route("/api/batches/<int:batch_id>/analyze_transfer", methods=["POST"])
+def api_analyze_transfer(batch_id):
+    conn = get_conn()
+    batch = db.get_batch(conn, batch_id)
+    if not batch:
+        return jsonify({"error": "Batch nije pronadjen."}), 404
+
+    body = request.get_json(force=True)
+    mapping = {
+        "from_col": body.get("from_col"),
+        "to_col": body.get("to_col"),
+        "amount_col": body.get("amount_col") or None,
+        "date_col": body.get("date_col") or None,
+    }
+    options = {
+        "account_from": body.get("account_from", ""),
+        "account_to": body.get("account_to", ""),
+    }
+
+    if not mapping["from_col"] or not mapping["to_col"]:
+        return jsonify({"error": "Moraš da mapiraš kolone 'Račun sa kog se plaća' i 'Račun na koji se plaća'."}), 400
+    if not (options["account_from"].strip() or options["account_to"].strip()):
+        return jsonify({"error": "Unesi bar jedan broj računa (A ili B)."}), 400
+
+    raw_rows = [t["raw"] for t in db.get_transactions(conn, batch_id)]
+    analyzed = analyze_transfer(raw_rows, mapping, options)
+
+    db.save_transfer_analysis(conn, batch_id, mapping, options, analyzed)
+
+    refreshed = db.get_transactions(conn, batch_id)
+    active = [t for t in refreshed if not t.get("is_false_alarm")]
+    matched = [t for t in active if t["flags"]]
+    total_amount = sum(t["paid_amount"] or 0 for t in matched)
+
+    stats = {
+        "total": len(refreshed),
+        "flagged_count": len(matched),
+        "full_count": len(matched),
+        "full_sum": round(total_amount, 2),
+    }
+
+    return jsonify({"rows": refreshed, "stats": stats})
+
+
 @app.route("/api/batches/<int:batch_id>/false_alarm", methods=["POST"])
 def api_set_false_alarm(batch_id):
     conn = get_conn()
@@ -337,7 +394,7 @@ def api_export_pdf(batch_id):
     columns = _json_or_empty(batch["columns_json"])
     mode = batch.get("mode") or "generic"
 
-    full_flag_type = "circular_confirmed" if mode == "bank_statement" else "full"
+    full_flag_type = "circular_confirmed" if mode == "bank_statement" else ("transfer" if mode == "transfer" else "full")
 
     if only_full:
         txns = [t for t in txns if any(f["type"] == full_flag_type for f in t["flags"]) and not t.get("is_false_alarm")]
@@ -352,6 +409,15 @@ def api_export_pdf(batch_id):
             "flagged_count": len([t for t in all_txns if t["flags"] and not t.get("is_false_alarm")]),
             "confirmed_count": len(full_rows),
             "confirmed_sum": round(sum((t["paid_amount"] or 0) for t in full_rows) / 2, 2) if full_rows else 0,
+        }
+    elif mode == "transfer":
+        all_txns = db.get_transactions(conn, batch_id)
+        matched = [t for t in all_txns if t["flags"] and not t.get("is_false_alarm")]
+        stats = {
+            "total": len(all_txns),
+            "flagged_count": len(matched),
+            "full_count": len(matched),
+            "full_sum": round(sum((t["paid_amount"] or 0) for t in matched), 2),
         }
     else:
         stats = _compute_stats(db.get_transactions(conn, batch_id))

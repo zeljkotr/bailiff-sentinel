@@ -149,6 +149,48 @@ def analyze_circular_refund(rows, mapping, options):
     return txns
 
 
+def analyze_transfer(rows, mapping, options):
+    """
+    Obelezava redove koji predstavljaju transfer sa konkretnog racuna
+    (from_col == account_from) na konkretan racun (to_col == account_to).
+    Koristi se kad korisnik zeli da izdvoji sve uplate izmedju tacno
+    dva odredjena racuna iz velikog XML izvoda.
+
+    mapping: from_col, to_col (obavezni), amount_col, date_col (opciono - za prikaz/sumu)
+    options: account_from, account_to — bar jedan mora biti popunjen;
+             poredjenje je normalizovano (bez razmaka/crtica, case-insensitive)
+             da bi radilo bez obzira na format upisa broja racuna.
+    """
+    from_col = mapping.get("from_col")
+    to_col = mapping.get("to_col")
+    amount_col = mapping.get("amount_col")
+
+    account_from = normalize_text(options.get("account_from") or "")
+    account_to = normalize_text(options.get("account_to") or "")
+
+    txns = []
+    for idx, raw in enumerate(rows):
+        amount = parse_amount(raw.get(amount_col)) if amount_col else None
+        txns.append({
+            "idx": idx,
+            "raw": raw,
+            "paid_amount": amount,
+            "returned_amount": None,
+            "flags": [],
+        })
+
+    if from_col and to_col and (account_from or account_to):
+        for t in txns:
+            from_val = normalize_text(t["raw"].get(from_col))
+            to_val = normalize_text(t["raw"].get(to_col))
+            match_from = (not account_from) or (account_from in from_val)
+            match_to = (not account_to) or (account_to in to_val)
+            if match_from and match_to:
+                t["flags"].append({"type": "transfer", "label": "TRANSFER A→B"})
+
+    return txns
+
+
 def analyze(rows, mapping, options):
     """
     rows: list[dict] — sirovi redovi (kljucevi su imena kolona iz XML-a, plus '__source_file')

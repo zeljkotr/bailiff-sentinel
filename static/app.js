@@ -7,6 +7,7 @@ let currentMode = "generic";
 let sortCol = null;
 let sortDir = 1;
 let searchQuery = "";
+let viewFilter = "all"; // all | flagged | full
 const NONE = "__NONE__";
 
 document.querySelectorAll('input[name="analysisMode"]').forEach(radio => {
@@ -17,8 +18,10 @@ function updateModeVisibility() {
   const mode = document.querySelector('input[name="analysisMode"]:checked').value;
   document.getElementById("genericMapping").classList.toggle("hidden", mode !== "generic");
   document.getElementById("bankMapping").classList.toggle("hidden", mode !== "bank");
+  document.getElementById("transferMapping").classList.toggle("hidden", mode !== "transfer");
   document.getElementById("modeCardGeneric").classList.toggle("selected", mode === "generic");
   document.getElementById("modeCardBank").classList.toggle("selected", mode === "bank");
+  document.getElementById("modeCardTransfer").classList.toggle("selected", mode === "transfer");
 }
 updateModeVisibility();
 
@@ -33,6 +36,29 @@ function setStep(n) {
   document.getElementById("line2").classList.toggle("done", n > 2);
 }
 setStep(1);
+
+// ---- welcome modal ----
+(function initWelcomeModal() {
+  const modal = document.getElementById("welcomeModal");
+  const closeBtn = document.getElementById("modalCloseBtn");
+  const closeX = document.getElementById("modalCloseX");
+  const dontShow = document.getElementById("dontShowAgain");
+
+  let skip = false;
+  try { skip = localStorage.getItem("paycheckSentinelSkipWelcome") === "1"; } catch (e) { /* ignore */ }
+
+  if (!skip) modal.classList.remove("hidden");
+
+  function closeModal() {
+    modal.classList.add("hidden");
+    if (dontShow.checked) {
+      try { localStorage.setItem("paycheckSentinelSkipWelcome", "1"); } catch (e) { /* ignore */ }
+    }
+  }
+  closeBtn.addEventListener("click", closeModal);
+  closeX.addEventListener("click", closeModal);
+  modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+})();
 
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
@@ -59,7 +85,7 @@ function clearErr() {
   parseErr.classList.add("hidden");
 }
 
-async function uploadFiles(fileListRaw) {
+function uploadFiles(fileListRaw) {
   clearErr();
   const files = Array.from(fileListRaw).filter(f => /\.xml$/i.test(f.name));
   if (files.length === 0) {
@@ -69,13 +95,43 @@ async function uploadFiles(fileListRaw) {
 
   document.getElementById("dzText").textContent = `Šaljem ${files.length} fajl(ova) na server...`;
 
+  const progressWrap = document.getElementById("uploadProgress");
+  const progressFill = document.getElementById("progressFill");
+  const progressLabel = document.getElementById("progressLabel");
+  progressWrap.classList.remove("hidden", "indeterminate");
+  progressFill.style.width = "0%";
+  progressLabel.textContent = `Šaljem podatke... 0%`;
+
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
 
-  try {
-    const resp = await fetch("/api/upload", { method: "POST", body: formData });
-    const data = await resp.json();
-    if (!resp.ok) {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/upload");
+
+  xhr.upload.addEventListener("progress", e => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    progressFill.style.width = pct + "%";
+    progressLabel.textContent = `Šaljem podatke... ${pct}%`;
+    if (pct >= 100) {
+      progressWrap.classList.add("indeterminate");
+      progressLabel.textContent = "Obrađujem XML fajlove...";
+    }
+  });
+
+  xhr.onload = () => {
+    progressWrap.classList.add("hidden");
+    progressWrap.classList.remove("indeterminate");
+
+    let data;
+    try {
+      data = JSON.parse(xhr.responseText);
+    } catch (e) {
+      showErr("Greška u komunikaciji sa serverom: neispravan odgovor.");
+      return;
+    }
+
+    if (xhr.status < 200 || xhr.status >= 300) {
       showErr(data.error || "Greška pri upload-u.");
       return;
     }
@@ -108,15 +164,24 @@ async function uploadFiles(fileListRaw) {
 
     populateColumnSelectors(data.columns);
     populateBankColumnSelectors(data.columns);
+    populateTransferColumnSelectors(data.columns);
+    populateAcctFilterColumn(data.columns);
+    resetResultFilters();
     document.getElementById("mapPanel").classList.remove("hidden");
     document.getElementById("mapPanel").classList.add("fade-in");
     document.getElementById("resultsPanel").classList.add("hidden");
     setStep(2);
 
     loadHistory();
-  } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
-  }
+  };
+
+  xhr.onerror = () => {
+    progressWrap.classList.add("hidden");
+    progressWrap.classList.remove("indeterminate");
+    showErr("Greška u komunikaciji sa serverom.");
+  };
+
+  xhr.send(formData);
 }
 
 function normalize(s) {
@@ -139,6 +204,33 @@ function fillSelect(sel, columns, includeNone) {
     o.textContent = c;
     sel.appendChild(o);
   });
+}
+
+function resetResultFilters() {
+  viewFilter = "all";
+  document.querySelectorAll("#viewFilterGroup .seg-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === "all"));
+  document.getElementById("acctFilterA").value = "";
+  document.getElementById("acctFilterB").value = "";
+  document.getElementById("acctFilter").classList.remove("filtering");
+  document.getElementById("searchBox").value = "";
+  searchQuery = "";
+}
+
+function populateAcctFilterColumn(columns) {
+  const sel = document.getElementById("acctFilterCol");
+  sel.innerHTML = '<option value="">— kolona sa brojem računa —</option>';
+  columns.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  });
+  const guess = columns.find(c => normalize(c).includes("racun")) ||
+                columns.find(c => normalize(c).includes("acct")) ||
+                columns.find(c => normalize(c).includes("iban")) ||
+                columns.find(c => normalize(c).includes("duznik")) ||
+                columns.find(c => normalize(c).includes("platilac"));
+  if (guess) sel.value = guess;
 }
 
 function populateColumnSelectors(columns) {
@@ -225,7 +317,80 @@ function populateBankColumnSelectors(columns) {
   if (dateGuess) dateSel.value = dateGuess;
 }
 
+function populateTransferColumnSelectors(columns) {
+  const fromSel = document.getElementById("colFrom");
+  const toSel = document.getElementById("colTo");
+  const amountSel = document.getElementById("colTransferAmount");
+  const dateSel = document.getElementById("colTransferDate");
+
+  fillSelect(fromSel, columns, false);
+  fillSelect(toSel, columns, false);
+  fillSelect(amountSel, columns, true);
+  fillSelect(dateSel, columns, true);
+
+  const fromGuess = columns.find(c => normalize(c).includes("nalogodavac")) ||
+                     columns.find(c => normalize(c).includes("duznik")) ||
+                     columns.find(c => normalize(c).includes("platilac")) ||
+                     columns.find(c => normalize(c).includes("racun"));
+  const toGuess = columns.find(c => c !== fromGuess && normalize(c).includes("primalac")) ||
+                  columns.find(c => c !== fromGuess && normalize(c).includes("poverilac")) ||
+                  columns.find(c => c !== fromGuess && normalize(c).includes("racun"));
+  const amountGuess = columns.find(c => normalize(c).includes("iznos")) ||
+                      columns.find(c => normalize(c).includes("trnamt")) ||
+                      columns.find(c => normalize(c).includes("amount"));
+  const dateGuess = columns.find(c => normalize(c).includes("datum")) ||
+                     columns.find(c => normalize(c).includes("dtposted"));
+
+  if (fromGuess) fromSel.value = fromGuess;
+  if (toGuess) toSel.value = toGuess;
+  if (amountGuess) amountSel.value = amountGuess;
+  if (dateGuess) dateSel.value = dateGuess;
+}
+
+document.getElementById("analyzeTransferBtn").addEventListener("click", runTransferAnalysis);
 document.getElementById("analyzeBankBtn").addEventListener("click", runBankAnalysis);
+
+async function runTransferAnalysis() {
+  if (!currentBatchId) return;
+
+  const accountFrom = document.getElementById("accountFrom").value.trim();
+  const accountTo = document.getElementById("accountTo").value.trim();
+  if (!accountFrom && !accountTo) {
+    showErr("Unesi bar jedan broj računa (A ili B).");
+    return;
+  }
+
+  const body = {
+    from_col: document.getElementById("colFrom").value,
+    to_col: document.getElementById("colTo").value,
+    amount_col: (() => { const v = document.getElementById("colTransferAmount").value; return v === NONE ? null : v; })(),
+    date_col: (() => { const v = document.getElementById("colTransferDate").value; return v === NONE ? null : v; })(),
+    account_from: accountFrom,
+    account_to: accountTo,
+  };
+
+  try {
+    const resp = await fetch(`/api/batches/${currentBatchId}/analyze_transfer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showErr(data.error || "Greška pri analizi.");
+      return;
+    }
+
+    currentRows = data.rows;
+    currentMode = "transfer";
+    currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
+    renderResults();
+    setStep(3);
+    loadHistory();
+  } catch (err) {
+    showErr("Greška u komunikaciji sa serverom: " + err.message);
+  }
+}
 
 async function runBankAnalysis() {
   if (!currentBatchId) return;
@@ -318,7 +483,7 @@ async function runAnalysis() {
 function computeClientStats(rows) {
   const active = rows.filter(r => !r.is_false_alarm);
   const flagged = active.filter(r => r.flags.length > 0);
-  const fullType = currentMode === "bank" ? "circular_confirmed" : "full";
+  const fullType = currentMode === "bank" ? "circular_confirmed" : (currentMode === "transfer" ? "transfer" : "full");
   const fullRows = active.filter(r => r.flags.some(f => f.type === fullType));
   let fullSum = fullRows.reduce((acc, r) => acc + (r.paid_amount || 0), 0);
   if (currentMode === "bank") fullSum = fullSum / 2; // par se racuna 2x (debit+credit)
@@ -372,7 +537,6 @@ function toggleFalseAlarm(rowIdx, checked) {
 window.toggleFalseAlarm = toggleFalseAlarm;
 
 function renderResults() {
-  const onlyFlagged = document.getElementById("onlyFlagged").checked;
   const theadRow = document.getElementById("theadRow");
   const tbody = document.getElementById("tbody");
 
@@ -389,7 +553,25 @@ function renderResults() {
     return `<th onclick="setSort('${cd.key.replace(/'/g, "\\'")}')">${escapeHtml(cd.label)}${arrow}</th>`;
   }).join("");
 
-  let toShow = onlyFlagged ? currentRows.filter(r => r.flags.length > 0) : currentRows;
+  const fullType = currentMode === "bank" ? "circular_confirmed" : (currentMode === "transfer" ? "transfer" : "full");
+  if (viewFilter === "flagged") {
+    toShow = toShow.filter(r => r.flags.length > 0);
+  } else if (viewFilter === "full") {
+    toShow = toShow.filter(r => r.flags.some(f => f.type === fullType));
+  }
+
+  const acctCol = document.getElementById("acctFilterCol").value;
+  const acctA = document.getElementById("acctFilterA").value.trim().toLowerCase();
+  const acctB = document.getElementById("acctFilterB").value.trim().toLowerCase();
+  if (acctCol && (acctA || acctB)) {
+    toShow = toShow.filter(r => {
+      const val = String(r.raw[acctCol] ?? "").toLowerCase();
+      const matchA = acctA && val.includes(acctA);
+      const matchB = acctB && val.includes(acctB);
+      if (acctA && acctB) return matchA || matchB;
+      return matchA || matchB;
+    });
+  }
 
   if (searchQuery.trim() !== "") {
     const q = searchQuery.trim().toLowerCase();
@@ -412,12 +594,22 @@ function renderResults() {
     const badges = r.flags.length
       ? r.flags.map(f => `<span class="badge ${f.type}">${f.label}</span>`).join("")
       : '<span class="badge ok">OK</span>';
-    const isFull = r.flags.some(f => f.type === "full" || f.type === "circular_confirmed");
+    const isFull = r.flags.some(f => f.type === "full" || f.type === "circular_confirmed" || f.type === "transfer");
     let rowClass = isFull ? "flagged-full" : (r.flags.length ? "flagged-warn" : "");
     if (r.is_false_alarm) rowClass += " false-alarm";
     const checkboxCell = `<td class="no-strike"><input type="checkbox" ${r.is_false_alarm ? "checked" : ""} onchange="toggleFalseAlarm(${r.idx}, this.checked)"></td>`;
     return `<tr class="${rowClass}"><td>${r.idx + 1}</td><td>${escapeHtml(r.raw.__source_file ?? "")}</td>${cells}<td>${badges}</td>${checkboxCell}</tr>`;
   }).join("");
+
+  if (toShow.length === 0) {
+    const colspan = colDefs.length;
+    tbody.innerHTML = `<tr><td colspan="${colspan}">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        Nijedan red ne odgovara trenutnom filteru.
+      </div>
+    </td></tr>`;
+  }
 
   const stats = computeClientStats(currentRows);
   document.getElementById("statTotal").textContent = stats.total;
@@ -425,13 +617,60 @@ function renderResults() {
   document.getElementById("statFull").textContent = stats.full_count;
   document.getElementById("statSum").textContent = stats.full_sum.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  const legendBox = document.getElementById("legendBox");
+  const statFullLabel = document.querySelector("#statFull").closest(".stat").querySelector(".l");
+  const statSumLabel = document.querySelector("#statSum").closest(".stat").querySelector(".l");
+  if (currentMode === "transfer") {
+    legendBox.innerHTML = `<span><span class="badge transfer">TRANSFER A→B</span> transakcija između zadatih računa</span>`;
+    statFullLabel.textContent = "Pronađenih transfera";
+    statSumLabel.textContent = "Ukupan iznos transfera";
+  } else if (currentMode === "bank") {
+    legendBox.innerHTML = `
+      <span><span class="badge circular_confirmed">POVRAT (ref. broj)</span> pouzdano uparen povrat</span>
+      <span><span class="badge circular_possible">MOGUĆ POVRAT (iznos)</span> uparen po iznosu/datumu</span>`;
+    statFullLabel.textContent = "Potvrđen povrat";
+    statSumLabel.textContent = "Iznos potvrđenog povrata";
+  } else {
+    legendBox.innerHTML = `
+      <span><span class="badge full">PUN POVRAT</span> tačno poklapanje</span>
+      <span><span class="badge partial">DELIMIČAN</span> delimičan povrat</span>
+      <span><span class="badge dupid">DUP. ID</span> dupli broj naloga</span>
+      <span><span class="badge duppay">DUP. UPLATA</span> ista uplata ponovljena</span>
+      <span><span class="badge outlier">OUTLIER</span> neuobičajen iznos</span>`;
+    statFullLabel.textContent = "Pun povrat";
+    statSumLabel.textContent = "Iznos punog povrata";
+  }
+
   const resultsPanel = document.getElementById("resultsPanel");
   const wasHidden = resultsPanel.classList.contains("hidden");
   resultsPanel.classList.remove("hidden");
   if (wasHidden) resultsPanel.classList.add("fade-in");
 }
 
-document.getElementById("onlyFlagged").addEventListener("change", () => {
+document.querySelectorAll("#viewFilterGroup .seg-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    viewFilter = btn.dataset.filter;
+    document.querySelectorAll("#viewFilterGroup .seg-btn").forEach(b => b.classList.toggle("active", b === btn));
+    if (currentRows.length) renderResults();
+  });
+});
+
+["acctFilterCol", "acctFilterA", "acctFilterB"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => {
+    const a = document.getElementById("acctFilterA").value.trim();
+    const b = document.getElementById("acctFilterB").value.trim();
+    document.getElementById("acctFilter").classList.toggle("filtering", !!(a || b));
+    if (currentRows.length) renderResults();
+  });
+  document.getElementById(id).addEventListener("change", () => {
+    if (currentRows.length) renderResults();
+  });
+});
+
+document.getElementById("acctFilterClear").addEventListener("click", () => {
+  document.getElementById("acctFilterA").value = "";
+  document.getElementById("acctFilterB").value = "";
+  document.getElementById("acctFilter").classList.remove("filtering");
   if (currentRows.length) renderResults();
 });
 
@@ -516,7 +755,7 @@ async function openBatch(batchId) {
   currentBatchId = batchId;
   currentColumns = data.batch.columns_json;
   currentRows = data.rows;
-  currentMode = data.batch.mode === "bank_statement" ? "bank" : "generic";
+  currentMode = data.batch.mode === "bank_statement" ? "bank" : (data.batch.mode === "transfer" ? "transfer" : "generic");
   currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
 
   document.getElementById("rowCount").textContent = data.batch.row_count;
@@ -525,6 +764,9 @@ async function openBatch(batchId) {
   document.getElementById("dzText").textContent = `Otvoren batch #${batchId} — ${data.batch.row_count} redova`;
 
   populateColumnSelectors(currentColumns);
+  populateTransferColumnSelectors(currentColumns);
+  populateAcctFilterColumn(currentColumns);
+  resetResultFilters();
 
   // popuni prethodno mapiranje ako postoji
   if (data.batch.paid_col) document.getElementById("colPaid").value = data.batch.paid_col;
@@ -541,10 +783,21 @@ async function openBatch(batchId) {
   document.getElementById("checkOutlier").checked = !!data.batch.check_outlier;
   refreshCheckAvailability();
 
+  if (data.batch.mode === "transfer") {
+    if (data.batch.from_col) document.getElementById("colFrom").value = data.batch.from_col;
+    if (data.batch.to_col) document.getElementById("colTo").value = data.batch.to_col;
+    if (data.batch.amount_col) document.getElementById("colTransferAmount").value = data.batch.amount_col;
+    if (data.batch.date_col) document.getElementById("colTransferDate").value = data.batch.date_col;
+    document.getElementById("accountFrom").value = data.batch.account_from ?? "";
+    document.getElementById("accountTo").value = data.batch.account_to ?? "";
+  }
+
   document.getElementById("mapPanel").classList.remove("hidden");
 
   if (currentMode === "bank") {
     document.getElementById("modeBank").checked = true;
+  } else if (currentMode === "transfer") {
+    document.getElementById("modeTransfer").checked = true;
   } else {
     document.getElementById("modeGeneric").checked = true;
   }

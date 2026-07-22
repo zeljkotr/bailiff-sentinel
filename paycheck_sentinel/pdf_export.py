@@ -94,7 +94,15 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     created = (batch.get("created_at") or "").replace("T", " ")[:16]
     if created:
         meta_lines.append(f"Datum upload-a: {created}")
-    mode_label = "Bankovni izvod (kružni povrat)" if mode == "bank_statement" else "Standardno (plaćeno/vraćeno)"
+    if mode == "bank_statement":
+        mode_label = "Bankovni izvod (kružni povrat)"
+    elif mode == "transfer":
+        mode_label = "Transfer između računa"
+        if batch.get("account_from") or batch.get("account_to"):
+            meta_lines.append(f"Račun A (sa kog se plaća): {batch.get('account_from') or '—'}")
+            meta_lines.append(f"Račun B (na koji se plaća): {batch.get('account_to') or '—'}")
+    else:
+        mode_label = "Standardno (plaćeno/vraćeno)"
     meta_lines.append(f"Mod analize: {mode_label}")
 
     for line in meta_lines:
@@ -137,7 +145,7 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
         row_cells.append(Paragraph(flags_text, cell_style))
         table_data.append(row_cells)
 
-        is_full = any(f["type"] in ("full", "circular_confirmed") for f in flags)
+        is_full = any(f["type"] in ("full", "circular_confirmed", "transfer") for f in flags)
         if is_full:
             row_colors.append(colors.HexColor("#fbdede"))
         elif flags:
@@ -186,6 +194,11 @@ def _pick_display_columns(batch, all_columns, mode):
         for extra in ("payeeinfo.name", "payeeaccountinfo.acctid", "purpose"):
             if extra in all_columns and extra not in picked:
                 picked.append(extra)
+    elif mode == "transfer":
+        for key in ("date_col", "from_col", "to_col", "amount_col"):
+            col = batch.get(key)
+            if col and col in all_columns and col not in picked:
+                picked.append(col)
     else:
         for key in ("date_col", "debtor_col", "id_col", "paid_col", "returned_col"):
             col = batch.get(key)

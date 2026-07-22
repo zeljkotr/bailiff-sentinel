@@ -4,9 +4,42 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>paycheck-sentinel</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ versioned_static('style.css') }}">
 </head>
 <body>
+
+<div class="modal-overlay hidden" id="welcomeModal">
+  <div class="modal-box">
+    <button class="modal-close" id="modalCloseX" aria-label="Zatvori">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+    </button>
+    <div class="modal-header">
+      <div class="modal-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l8 3v6c0 5-3.4 8.4-8 11-4.6-2.6-8-6-8-11V5l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
+      </div>
+      <div>
+        <h2>Dobrodošli u paycheck-sentinel</h2>
+        <p class="modal-sub">Alat za otkrivanje povrata, duplikata i sumnjivih transakcija u iBank izvodima.</p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="modal-steps">
+        <div class="modal-step"><span class="modal-step-n">1</span><div><b>Učitaj XML</b><span>Prevuci jedan ili više iBank izvoda, ili ceo folder odjednom.</span></div></div>
+        <div class="modal-step"><span class="modal-step-n">2</span><div><b>Podesi analizu</b><span>Odaberi mod (standardni ili bankovni izvod), mapiraj kolone i uključi provere koje su ti potrebne.</span></div></div>
+        <div class="modal-step"><span class="modal-step-n">3</span><div><b>Pregledaj rezultate</b><span>Filtriraj po upozorenju ili po računu, obeleži lažne uzbune, izvezi u CSV ili PDF.</span></div></div>
+      </div>
+      <div class="modal-author">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+        <div>Razvio <b>Željko Tripčevski</b> — IT Team Lead / DevOps &amp; Cloud Engineer. Podaci ostaju lokalno, nema slanja na spoljne servere.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <label class="checkbox-pill"><input type="checkbox" id="dontShowAgain"> Ne prikazuj ponovo</label>
+      <button id="modalCloseBtn">Razumem, počni</button>
+    </div>
+  </div>
+</div>
+
 
 <h1>
   <span class="logo-dot"></span>
@@ -52,6 +85,10 @@
     <div class="dz-hint">.xml fajlovi iz iBank sistema</div>
     <input type="file" id="fileInput" accept=".xml,text/xml,application/xml" multiple>
   </div>
+  <div class="upload-progress hidden" id="uploadProgress">
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-label" id="progressLabel">Šaljem fajlove...</div>
+  </div>
   <div class="err hidden" id="parseErr">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
     <span id="parseErrText"></span>
@@ -86,6 +123,17 @@
       <div>
         <div class="mode-title">Bankovni izvod</div>
         <div class="mode-desc">iBank izvod — debit/credit kolona + broj naloga, uparuje odlive i prilive.</div>
+      </div>
+      <div class="mode-check"></div>
+    </label>
+    <label class="mode-card" id="modeCardTransfer" for="modeTransfer">
+      <input type="radio" name="analysisMode" value="transfer" id="modeTransfer">
+      <div class="mode-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      </div>
+      <div>
+        <div class="mode-title">Transfer između računa</div>
+        <div class="mode-desc">Unesi tačno sa kog i na koji račun je plaćeno — izlista samo te transakcije.</div>
       </div>
       <div class="mode-check"></div>
     </label>
@@ -188,7 +236,7 @@
       </div>
     </div>
 
-    <button id="analyzeBtn">
+    <button id="analyzeBtn" class="btn-primary-lg">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
       Analiziraj
     </button>
@@ -240,9 +288,60 @@
       znak da je banka vratila novac. Poklapanje po broju naloga (ref) je pouzdano; ako fali, koristi se
       fallback po istom iznosu unutar zadatog broja dana (manje pouzdano, drugačije obeleženo).
     </div>
-    <button id="analyzeBankBtn">
+    <button id="analyzeBankBtn" class="btn-primary-lg">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
       Analiziraj
+    </button>
+  </div>
+
+  <div id="transferMapping" class="hidden">
+    <div class="field-group-label">Transfer koji tražiš <span class="muted" id="batchLabelTransfer"></span></div>
+    <div class="transfer-directions">
+      <div class="transfer-dir-box">
+        <div class="transfer-dir-title">Odakle ide novac <span class="req-mark">*</span></div>
+        <div class="field">
+          <label>Kolona sa brojem računa (u XML-u)</label>
+          <select id="colFrom"></select>
+        </div>
+        <div class="field">
+          <label>Konkretan broj računa koji tražiš (Račun A)</label>
+          <input type="text" id="accountFrom" placeholder="npr. 160-1234567-89">
+        </div>
+      </div>
+      <div class="transfer-dir-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </div>
+      <div class="transfer-dir-box">
+        <div class="transfer-dir-title">Kuda ide novac</div>
+        <div class="field">
+          <label>Kolona sa brojem računa (u XML-u)</label>
+          <select id="colTo"></select>
+        </div>
+        <div class="field">
+          <label>Konkretan broj računa koji tražiš (Račun B, opciono)</label>
+          <input type="text" id="accountTo" placeholder="npr. 265-9876543-21">
+        </div>
+      </div>
+    </div>
+    <div class="desc muted" style="margin:12px 0;">
+      Popuni bar broj računa A. Ako popuniš i B, izlistavaju se samo transakcije koje idu tačno sa
+      računa A na račun B. Poređenje ignoriše razmake/crtice u broju računa.
+    </div>
+
+    <div class="field-group-label">Dodatne kolone <span class="muted">— opciono, samo za prikaz i PDF</span></div>
+    <div class="row field-group">
+      <div class="field">
+        <label>Iznos</label>
+        <select id="colTransferAmount"></select>
+      </div>
+      <div class="field">
+        <label>Datum</label>
+        <select id="colTransferDate"></select>
+      </div>
+    </div>
+    <button id="analyzeTransferBtn" class="btn-primary-lg">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
+      Prikaži transfere
     </button>
   </div>
 
@@ -277,7 +376,7 @@
     <div class="stat warn"><div class="n" id="statFull">0</div><div class="l">Pun povrat</div></div>
     <div class="stat warn"><div class="n" id="statSum">0</div><div class="l">Iznos punog povrata</div></div>
   </div>
-  <div class="legend">
+  <div class="legend" id="legendBox">
     <span><span class="badge full">PUN POVRAT</span> tačno poklapanje</span>
     <span><span class="badge partial">DELIMIČAN</span> delimičan povrat</span>
     <span><span class="badge dupid">DUP. ID</span> dupli broj naloga</span>
@@ -313,10 +412,27 @@
         </button>
       </div>
     </div>
-    <label class="checkbox-pill">
-      <input type="checkbox" id="onlyFlagged"> Prikaži samo redove sa upozorenjem
-    </label>
+    <div class="segmented" id="viewFilterGroup">
+      <button type="button" class="seg-btn active" data-filter="all">Sve</button>
+      <button type="button" class="seg-btn" data-filter="flagged">Samo upozorenja</button>
+      <button type="button" class="seg-btn" data-filter="full">Samo pun povrat</button>
+    </div>
   </div>
+
+  <div class="acct-filter" id="acctFilter">
+    <div class="acct-filter-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      Filtriraj transfere po računu <span class="muted">— npr. samo uplate sa računa A na račun B</span>
+    </div>
+    <div class="row" style="gap:10px; align-items:center;">
+      <select id="acctFilterCol"><option value="">— kolona sa brojem računa —</option></select>
+      <input type="text" id="acctFilterA" placeholder="Račun A">
+      <span class="muted">→</span>
+      <input type="text" id="acctFilterB" placeholder="Račun B (opciono)">
+      <button class="secondary tiny" id="acctFilterClear">Očisti filter</button>
+    </div>
+  </div>
+
   <div class="row" style="margin-bottom:10px;">
     <div class="search-wrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -331,7 +447,7 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="{{ versioned_static('app.js') }}"></script>
 <footer style="text-align:center; color:var(--muted); font-size:11px; margin-top:24px; padding-top:14px; border-top:1px solid var(--border);">
   Developed by Zeljko Tripcevski
 </footer>
