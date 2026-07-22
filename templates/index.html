@@ -2,74 +2,145 @@
 <html lang="sr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>paycheck-sentinel</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h1>paycheck-sentinel
-  <span class="sub">Analiza transakcija: povrati od banke, duplikati i neuobičajeni iznosi. Backend: Flask + SQLite — istorija se čuva lokalno.</span>
+<h1>
+  <span class="logo-dot"></span>
+  <span class="title-col">
+    paycheck-sentinel
+    <span class="sub">Analiza transakcija: povrati od banke, duplikati i neuobičajeni iznosi. Backend: Flask + SQLite — istorija se čuva lokalno.</span>
+  </span>
 </h1>
 
-<div class="panel" id="historyPanel">
-  <h2>Istorija upload-a</h2>
-  <div class="table-wrap" style="max-height:220px;">
-    <table>
-      <thead><tr><th>ID</th><th>Naziv</th><th>Datum</th><th>Redova</th><th>Analizirano</th><th>Upozorenja</th><th></th></tr></thead>
-      <tbody id="historyBody"><tr><td colspan="7" class="muted">Nema još učitanih fajlova.</td></tr></tbody>
-    </table>
+<div class="stepper" id="stepper">
+  <div class="step" data-step="1">
+    <span class="step-num">1</span>
+    <span class="step-label">Učitaj fajl</span>
+  </div>
+  <div class="step-line" id="line1"></div>
+  <div class="step" data-step="2">
+    <span class="step-num">2</span>
+    <span class="step-label">Podesi analizu</span>
+  </div>
+  <div class="step-line" id="line2"></div>
+  <div class="step" data-step="3">
+    <span class="step-num">3</span>
+    <span class="step-label">Rezultati</span>
   </div>
 </div>
 
+<details class="panel" id="historyPanel">
+  <summary>
+    <h2>
+      <svg class="h2-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13a9 9 0 1 0 .5-4.5L3 8"/><path d="M12 7v5l3 3"/></svg>
+      Istorija upload-a
+    </h2>
+    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+  </summary>
+  <div class="history-body-wrap">
+    <div class="table-wrap" style="max-height:220px;">
+      <table>
+        <thead><tr><th>ID</th><th>Naziv</th><th>Datum</th><th>Redova</th><th>Analizirano</th><th>Upozorenja</th><th></th></tr></thead>
+        <tbody id="historyBody"><tr><td colspan="7" class="muted">Nema još učitanih fajlova.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</details>
+
 <div class="panel" id="uploadPanel">
-  <h2>1. Učitaj XML fajl(ove)</h2>
+  <h2>
+    <svg class="h2-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+    Učitaj XML fajl(ove)
+  </h2>
+  <p class="h2-help">Podržani su izvodi iz iBank sistema. Možeš prevući više fajlova ili ceo folder odjednom.</p>
   <div class="dropzone" id="dropzone">
+    <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
     <div id="dzText">Prevuci jedan ili više XML fajlova ovde (ili ceo folder) ili klikni da izabereš</div>
+    <div class="dz-hint">.xml fajlovi iz iBank sistema</div>
     <input type="file" id="fileInput" accept=".xml,text/xml,application/xml" multiple>
   </div>
-  <div class="err hidden" id="parseErr"></div>
+  <div class="err hidden" id="parseErr">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+    <span id="parseErrText"></span>
+  </div>
 </div>
 
 <div class="panel hidden" id="mapPanel">
-  <h2>2. Odaberi mod analize</h2>
-  <div class="row" style="margin-bottom:16px;">
-    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-      <input type="radio" name="analysisMode" value="generic" id="modeGeneric" checked> Standardno (dve kolone: plaćeno/vraćeno)
+  <h2>
+    <svg class="h2-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h16"/></svg>
+    Podesi analizu
+  </h2>
+  <p class="h2-help">Odaberi mod, mapiraj kolone iz fajla i uključi provere koje su ti potrebne.</p>
+
+  <div class="field-group-label">Mod analize</div>
+  <div class="mode-select">
+    <label class="mode-card" id="modeCardGeneric" for="modeGeneric">
+      <input type="radio" name="analysisMode" value="generic" id="modeGeneric" checked>
+      <div class="mode-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>
+      </div>
+      <div>
+        <div class="mode-title">Standardno</div>
+        <div class="mode-desc">Dve kolone: plaćeno banci / banka uplatila meni. Za opšti tabelarni format.</div>
+      </div>
+      <div class="mode-check"></div>
     </label>
-    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-      <input type="radio" name="analysisMode" value="bank" id="modeBank"> Bankovni izvod (iBank — debit/credit + ref. broj)
+    <label class="mode-card" id="modeCardBank" for="modeBank">
+      <input type="radio" name="analysisMode" value="bank" id="modeBank">
+      <div class="mode-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M4 21V9l8-6 8 6v12"/><path d="M9 21v-6h6v6"/></svg>
+      </div>
+      <div>
+        <div class="mode-title">Bankovni izvod</div>
+        <div class="mode-desc">iBank izvod — debit/credit kolona + broj naloga, uparuje odlive i prilive.</div>
+      </div>
+      <div class="mode-check"></div>
     </label>
   </div>
 
   <div id="genericMapping">
-    <h2>Mapiraj kolone <span class="muted" id="batchLabel"></span></h2>
-    <div class="row">
+    <div class="field-group-label">Obavezne kolone <span class="muted" id="batchLabel"></span></div>
+    <div class="row field-group">
       <div class="field">
-        <label>Plaćeno banci <span style="color:var(--coral)">*</span></label>
+        <label>Plaćeno banci <span class="req-mark">*</span></label>
         <select id="colPaid"></select>
       </div>
       <div class="field">
-        <label>Banka uplatila meni <span style="color:var(--coral)">*</span></label>
+        <label>Banka uplatila meni <span class="req-mark">*</span></label>
         <select id="colReturned"></select>
       </div>
+    </div>
+
+    <div class="field-group-label">Opcione kolone <span class="muted">— omogućavaju dodatne provere</span></div>
+    <div class="row field-group">
       <div class="field">
-        <label>Broj naloga / ID (opciono)</label>
+        <label>Broj naloga / ID</label>
         <select id="colId"></select>
       </div>
       <div class="field">
-        <label>Dužnik / Platilac (opciono)</label>
+        <label>Dužnik / Platilac</label>
         <select id="colDebtor"></select>
       </div>
       <div class="field">
-        <label>Datum (opciono)</label>
+        <label>Datum</label>
         <select id="colDate"></select>
       </div>
     </div>
 
-    <h2 style="margin-top:20px;">Odaberi provere</h2>
+    <div class="field-group-label">Provere</div>
     <div class="checks-grid">
       <div class="check-card" id="cardFull">
-        <label class="title"><input type="checkbox" id="checkFull" checked> Pun povrat od banke</label>
+        <div class="title-row">
+          <label class="title" for="checkFull">
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+            Pun povrat od banke
+          </label>
+          <label class="switch"><input type="checkbox" id="checkFull" checked><span class="track"><span class="thumb"></span></span></label>
+        </div>
         <div class="desc">Iznos "plaćeno banci" se tačno poklapa sa "banka uplatila meni" — dužnik je verovatno platio na pogrešan račun, pa je banka vratila novac.</div>
         <div class="extra">
           <label>Tolerancija (din):</label>
@@ -78,22 +149,48 @@
       </div>
 
       <div class="check-card" id="cardPartial">
-        <label class="title"><input type="checkbox" id="checkPartial" checked> Delimičan povrat</label>
+        <div class="title-row">
+          <label class="title" for="checkPartial">
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Delimičan povrat
+          </label>
+          <label class="switch"><input type="checkbox" id="checkPartial" checked><span class="track"><span class="thumb"></span></span></label>
+        </div>
         <div class="desc">Banka je vratila deo iznosa (manje od punog "plaćeno banci") — informativno, vredi proveriti ručno.</div>
       </div>
 
       <div class="check-card" id="cardDupId">
-        <label class="title"><input type="checkbox" id="checkDupId"> Duplikat broja naloga</label>
-        <div class="desc">Isti broj naloga/ID se pojavljuje više puta — moguća greška u unosu ili duplo knjiženje. Zahteva mapiranu kolonu "Broj naloga / ID".</div>
+        <div class="title-row">
+          <label class="title" for="checkDupId">
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="12" height="12" rx="2"/><path d="M9 16v2a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2"/></svg>
+            Duplikat broja naloga
+          </label>
+          <label class="switch"><input type="checkbox" id="checkDupId"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="desc">Isti broj naloga/ID se pojavljuje više puta — moguća greška u unosu ili duplo knjiženje.</div>
+        <div class="unavailable-note">Potrebna je mapirana kolona "Broj naloga / ID".</div>
       </div>
 
       <div class="check-card" id="cardDupPay">
-        <label class="title"><input type="checkbox" id="checkDupPay"> Duplikat uplate</label>
-        <div class="desc">Isti dužnik, isti iznos i isti datum se ponavljaju — moguća duplirana uplata. Zahteva mapirane kolone "Dužnik" i "Datum".</div>
+        <div class="title-row">
+          <label class="title" for="checkDupPay">
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="12" height="12" rx="2"/><path d="M9 16v2a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2"/></svg>
+            Duplikat uplate
+          </label>
+          <label class="switch"><input type="checkbox" id="checkDupPay"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="desc">Isti dužnik, isti iznos i isti datum se ponavljaju — moguća duplirana uplata.</div>
+        <div class="unavailable-note">Potrebne su mapirane kolone "Dužnik" i "Datum".</div>
       </div>
 
       <div class="check-card" id="cardOutlier">
-        <label class="title"><input type="checkbox" id="checkOutlier"> Neuobičajen iznos (outlier)</label>
+        <div class="title-row">
+          <label class="title" for="checkOutlier">
+            <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-5 3 3 5-7"/></svg>
+            Neuobičajen iznos (outlier)
+          </label>
+          <label class="switch"><input type="checkbox" id="checkOutlier"><span class="track"><span class="thumb"></span></span></label>
+        </div>
         <div class="desc">Iznos "plaćeno banci" mnogo je veći od medijane svih uplata — moguća greška u unosu ili nešto sumnjivo.</div>
         <div class="extra">
           <label>Prag (x medijana):</label>
@@ -102,19 +199,22 @@
       </div>
     </div>
 
-    <button id="analyzeBtn">Analiziraj</button>
+    <button id="analyzeBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
+      Analiziraj
+    </button>
   </div>
 
   <div id="bankMapping" class="hidden">
-    <h2>Mapiraj kolone <span class="muted" id="batchLabelBank"></span></h2>
+    <div class="field-group-label">Kolone <span class="muted" id="batchLabelBank"></span></div>
     <div class="footer-note" id="ownAccountNote" style="margin-bottom:10px;"></div>
-    <div class="row">
+    <div class="row field-group">
       <div class="field">
-        <label>Iznos <span style="color:var(--coral)">*</span></label>
+        <label>Iznos <span class="req-mark">*</span></label>
         <select id="colAmount"></select>
       </div>
       <div class="field">
-        <label>Smer (debit/credit) <span style="color:var(--coral)">*</span></label>
+        <label>Smer (debit/credit) <span class="req-mark">*</span></label>
         <select id="colBenefit"></select>
       </div>
       <div class="field">
@@ -126,7 +226,8 @@
         <select id="colDateBank"></select>
       </div>
     </div>
-    <div class="row" style="margin-top:12px;">
+    <div class="field-group-label">Podešavanja poklapanja</div>
+    <div class="row field-group">
       <div class="field">
         <label>Vrednost za "odliv" (debit)</label>
         <input type="text" id="debitValue" value="debit" style="width:140px;">
@@ -140,7 +241,7 @@
         <input type="number" id="maxDaysGap" value="30" step="1" min="0" style="width:140px;">
       </div>
       <div class="field" style="justify-content:flex-end;">
-        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <label class="checkbox-pill">
           <input type="checkbox" id="requireRefnumber"> Samo sigurna poklapanja (po ref. broju)
         </label>
       </div>
@@ -150,14 +251,20 @@
       znak da je banka vratila novac. Poklapanje po broju naloga (ref) je pouzdano; ako fali, koristi se
       fallback po istom iznosu unutar zadatog broja dana (manje pouzdano, drugačije obeleženo).
     </div>
-    <button id="analyzeBankBtn">Analiziraj</button>
+    <button id="analyzeBankBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
+      Analiziraj
+    </button>
   </div>
 
   <div class="footer-note">Detektovano redova: <span id="rowCount">0</span> · Detektovane kolone: <span id="colCount">0</span></div>
 </div>
 
 <div class="panel hidden" id="resultsPanel">
-  <h2>4. Rezultati</h2>
+  <h2>
+    <svg class="h2-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+    Rezultati
+  </h2>
   <div class="stats">
     <div class="stat neutral"><div class="n" id="statTotal">0</div><div class="l">Ukupno redova</div></div>
     <div class="stat warn"><div class="n" id="statAny">0</div><div class="l">Redova sa upozorenjem</div></div>
@@ -171,18 +278,39 @@
     <span><span class="badge duppay">DUP. UPLATA</span> ista uplata ponovljena</span>
     <span><span class="badge outlier">OUTLIER</span> neuobičajen iznos</span>
   </div>
-  <div class="row" style="margin-bottom:14px;">
-    <button class="secondary" id="exportFlaggedBtn">Izvezi upozorenja (CSV)</button>
-    <button class="secondary" id="exportAllBtn">Izvezi sve (CSV)</button>
-    <button class="secondary" id="exportFlaggedPdfBtn">Izvezi upozorenja (PDF)</button>
-    <button class="secondary" id="exportFullPdfBtn">Izvezi samo pun povrat (PDF)</button>
-    <button class="secondary" id="exportAllPdfBtn">Izvezi sve (PDF)</button>
-    <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); cursor:pointer;">
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <span class="toolbar-label">Izvoz</span>
+      <button class="secondary" id="exportFlaggedBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        Upozorenja (CSV)
+      </button>
+      <button class="secondary" id="exportAllBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        Sve (CSV)
+      </button>
+      <button class="secondary" id="exportFlaggedPdfBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+        Upozorenja (PDF)
+      </button>
+      <button class="secondary" id="exportFullPdfBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+        Samo pun povrat (PDF)
+      </button>
+      <button class="secondary" id="exportAllPdfBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+        Sve (PDF)
+      </button>
+    </div>
+    <label class="checkbox-pill">
       <input type="checkbox" id="onlyFlagged"> Prikaži samo redove sa upozorenjem
     </label>
   </div>
   <div class="row" style="margin-bottom:10px;">
-    <input type="text" id="searchBox" placeholder="Pretraga po svim kolonama..." style="min-width:280px;">
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="searchBox" placeholder="Pretraga po svim kolonama...">
+    </div>
   </div>
   <div class="table-wrap">
     <table id="resultsTable">

@@ -17,7 +17,22 @@ function updateModeVisibility() {
   const mode = document.querySelector('input[name="analysisMode"]:checked').value;
   document.getElementById("genericMapping").classList.toggle("hidden", mode !== "generic");
   document.getElementById("bankMapping").classList.toggle("hidden", mode !== "bank");
+  document.getElementById("modeCardGeneric").classList.toggle("selected", mode === "generic");
+  document.getElementById("modeCardBank").classList.toggle("selected", mode === "bank");
 }
+updateModeVisibility();
+
+// ---- step progress indicator ----
+function setStep(n) {
+  document.querySelectorAll(".step").forEach(el => {
+    const s = parseInt(el.dataset.step, 10);
+    el.classList.toggle("active", s === n);
+    el.classList.toggle("done", s < n);
+  });
+  document.getElementById("line1").classList.toggle("done", n > 1);
+  document.getElementById("line2").classList.toggle("done", n > 2);
+}
+setStep(1);
 
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
@@ -36,7 +51,7 @@ fileInput.addEventListener("change", e => {
 });
 
 function showErr(msg) {
-  parseErr.textContent = msg;
+  document.getElementById("parseErrText").textContent = msg;
   parseErr.classList.remove("hidden");
 }
 
@@ -95,6 +110,7 @@ async function uploadFiles(fileListRaw) {
     populateBankColumnSelectors(data.columns);
     document.getElementById("mapPanel").classList.remove("hidden");
     document.getElementById("resultsPanel").classList.add("hidden");
+    setStep(2);
 
     loadHistory();
   } catch (err) {
@@ -240,6 +256,7 @@ async function runBankAnalysis() {
     currentMode = "bank";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
     renderResults();
+    setStep(3);
     loadHistory();
   } catch (err) {
     showErr("Greška u komunikaciji sa serverom: " + err.message);
@@ -290,6 +307,7 @@ async function runAnalysis() {
     currentMode = "generic";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
     renderResults();
+    setStep(3);
     loadHistory();
   } catch (err) {
     showErr("Greška u komunikaciji sa serverom: " + err.message);
@@ -516,10 +534,19 @@ async function openBatch(batchId) {
 
   document.getElementById("mapPanel").classList.remove("hidden");
 
+  if (currentMode === "bank") {
+    document.getElementById("modeBank").checked = true;
+  } else {
+    document.getElementById("modeGeneric").checked = true;
+  }
+  updateModeVisibility();
+
   if (data.batch.analyzed) {
     renderResults();
+    setStep(3);
   } else {
     document.getElementById("resultsPanel").classList.add("hidden");
+    setStep(2);
   }
 }
 
@@ -530,6 +557,7 @@ async function deleteBatch(batchId) {
     currentBatchId = null;
     document.getElementById("mapPanel").classList.add("hidden");
     document.getElementById("resultsPanel").classList.add("hidden");
+    setStep(1);
   }
   loadHistory();
 }

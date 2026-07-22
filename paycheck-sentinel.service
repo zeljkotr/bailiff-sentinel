@@ -7,8 +7,8 @@ After=network.target
 Type=simple
 # Prilagodi User i WorkingDirectory tvojoj instalaciji na serveru
 User=zeljko
-WorkingDirectory=/home/zeljko/paycheck-sentinel-flask
-ExecStart=/home/zeljko/paycheck-sentinel-flask/venv/bin/python app.py
+WorkingDirectory=/home/zeljko/bailiff-sentinel
+ExecStart=/home/zeljko/bailiff-sentinel/venv/bin/python app.py
 Restart=on-failure
 RestartSec=5
 
