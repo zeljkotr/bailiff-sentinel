@@ -133,7 +133,7 @@
       </div>
       <div>
         <div class="mode-title">Transfer između računa</div>
-        <div class="mode-desc">Unesi tačno sa kog i na koji račun je plaćeno — izlista samo te transakcije.</div>
+        <div class="mode-desc">Prosta pretraga: račun A, račun B, period — bez provera i upozorenja.</div>
       </div>
       <div class="mode-check"></div>
     </label>
@@ -294,55 +294,36 @@
     </button>
   </div>
 
-  <div id="transferMapping" class="hidden">
-    <div class="field-group-label">Transfer koji tražiš <span class="muted" id="batchLabelTransfer"></span></div>
-    <div class="transfer-directions">
-      <div class="transfer-dir-box">
-        <div class="transfer-dir-title">Odakle ide novac <span class="req-mark">*</span></div>
-        <div class="field">
-          <label>Kolona sa brojem računa (u XML-u)</label>
-          <select id="colFrom"></select>
-        </div>
-        <div class="field">
-          <label>Konkretan broj računa koji tražiš (Račun A)</label>
-          <input type="text" id="accountFrom" placeholder="npr. 160-1234567-89">
-        </div>
-      </div>
-      <div class="transfer-dir-arrow">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
-      </div>
-      <div class="transfer-dir-box">
-        <div class="transfer-dir-title">Kuda ide novac</div>
-        <div class="field">
-          <label>Kolona sa brojem računa (u XML-u)</label>
-          <select id="colTo"></select>
-        </div>
-        <div class="field">
-          <label>Konkretan broj računa koji tražiš (Račun B, opciono)</label>
-          <input type="text" id="accountTo" placeholder="npr. 265-9876543-21">
-        </div>
-      </div>
-    </div>
-    <div class="desc muted" style="margin:12px 0;">
-      Popuni bar broj računa A. Ako popuniš i B, izlistavaju se samo transakcije koje idu tačno sa
-      računa A na račun B. Poređenje ignoriše razmake/crtice u broju računa.
-    </div>
-
-    <div class="field-group-label">Dodatne kolone <span class="muted">— opciono, samo za prikaz i PDF</span></div>
+  <div id="transferSearchPanel" class="hidden">
     <div class="row field-group">
       <div class="field">
-        <label>Iznos</label>
-        <select id="colTransferAmount"></select>
+        <label>Račun A</label>
+        <select id="transferAcctA"><option value="">— svi računi —</option></select>
       </div>
       <div class="field">
-        <label>Datum</label>
-        <select id="colTransferDate"></select>
+        <label>Račun B</label>
+        <input type="text" id="transferAcctB" placeholder="Broj računa">
+      </div>
+      <div class="field">
+        <label>Datum od</label>
+        <input type="date" id="transferDateFrom">
+      </div>
+      <div class="field">
+        <label>Datum do</label>
+        <input type="date" id="transferDateTo">
       </div>
     </div>
-    <button id="analyzeTransferBtn" class="btn-primary-lg">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9V3z"/></svg>
-      Prikaži transfere
+    <button id="transferExportPdfBtn" class="btn-primary-lg">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+      Izvezi filtrirano u PDF
     </button>
+    <div class="footer-note" id="transferHint" style="margin:10px 0;"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr id="transferTheadRow"><th>Datum</th><th>Račun A</th><th>Račun B</th><th>Iznos</th><th>Fajl</th></tr></thead>
+        <tbody id="transferTbody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="stepper" id="stepper">
@@ -410,6 +391,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
           Sve
         </button>
+        <button class="secondary" id="exportFilteredPdfBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>
+          Filtrirano (prikazano)
+        </button>
       </div>
     </div>
     <div class="segmented" id="viewFilterGroup">
@@ -422,15 +407,31 @@
   <div class="acct-filter" id="acctFilter">
     <div class="acct-filter-label">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-      Filtriraj transfere po računu <span class="muted">— npr. samo uplate sa računa A na račun B</span>
+      Filtriraj transfere po računu <span class="muted">— A je prepoznat iz zaglavlja učitanog XML-a, B upisuješ ručno</span>
     </div>
     <div class="row" style="gap:10px; align-items:center;">
-      <select id="acctFilterCol"><option value="">— kolona sa brojem računa —</option></select>
-      <input type="text" id="acctFilterA" placeholder="Račun A">
-      <span class="muted">→</span>
-      <input type="text" id="acctFilterB" placeholder="Račun B (opciono)">
-      <button class="secondary tiny" id="acctFilterClear">Očisti filter</button>
+      <div class="field" style="min-width:220px;">
+        <label>Račun A — izvod (prepoznato iz XML-a)</label>
+        <select id="acctFilterOwnAccount"><option value="">— svi računi —</option></select>
+      </div>
+      <div class="transfer-dir-arrow" style="align-self:flex-end; margin-bottom:9px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </div>
+      <div class="field" style="min-width:170px;">
+        <label>Kolona sa računom primaoca</label>
+        <select id="acctFilterCol"><option value="">— kolona —</option></select>
+      </div>
+      <div class="field" style="min-width:160px;">
+        <label>Račun B — kuda je išlo</label>
+        <input type="text" id="acctFilterValue" placeholder="Broj računa">
+      </div>
+      <button class="secondary tiny" id="acctFilterApply" style="align-self:flex-end; margin-bottom:1px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        Filtriraj
+      </button>
+      <button class="secondary tiny" id="acctFilterClear" style="align-self:flex-end; margin-bottom:1px;">Očisti filter</button>
     </div>
+    <div class="footer-note" id="acctFilterHint"></div>
   </div>
 
   <div class="row" style="margin-bottom:10px;">

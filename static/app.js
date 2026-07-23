@@ -8,6 +8,7 @@ let sortCol = null;
 let sortDir = 1;
 let searchQuery = "";
 let viewFilter = "all"; // all | flagged | full
+let lastRenderedRows = [];
 const NONE = "__NONE__";
 
 document.querySelectorAll('input[name="analysisMode"]').forEach(radio => {
@@ -18,10 +19,15 @@ function updateModeVisibility() {
   const mode = document.querySelector('input[name="analysisMode"]:checked').value;
   document.getElementById("genericMapping").classList.toggle("hidden", mode !== "generic");
   document.getElementById("bankMapping").classList.toggle("hidden", mode !== "bank");
-  document.getElementById("transferMapping").classList.toggle("hidden", mode !== "transfer");
+  document.getElementById("transferSearchPanel").classList.toggle("hidden", mode !== "transfer");
   document.getElementById("modeCardGeneric").classList.toggle("selected", mode === "generic");
   document.getElementById("modeCardBank").classList.toggle("selected", mode === "bank");
   document.getElementById("modeCardTransfer").classList.toggle("selected", mode === "transfer");
+  document.getElementById("resultsPanel").classList.toggle("hidden", mode === "transfer");
+  if (mode === "transfer" && currentRows.length) {
+    populateTransferSearchAccountA();
+    renderTransferSearch();
+  }
 }
 updateModeVisibility();
 
@@ -164,14 +170,13 @@ function uploadFiles(fileListRaw) {
 
     populateColumnSelectors(data.columns);
     populateBankColumnSelectors(data.columns);
-    populateTransferColumnSelectors(data.columns);
     populateAcctFilterColumn(data.columns);
     resetResultFilters();
     document.getElementById("mapPanel").classList.remove("hidden");
     document.getElementById("mapPanel").classList.add("fade-in");
-    document.getElementById("resultsPanel").classList.add("hidden");
     setStep(2);
 
+    loadRawRows(data.batch_id);
     loadHistory();
   };
 
@@ -209,28 +214,211 @@ function fillSelect(sel, columns, includeNone) {
 function resetResultFilters() {
   viewFilter = "all";
   document.querySelectorAll("#viewFilterGroup .seg-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === "all"));
-  document.getElementById("acctFilterA").value = "";
-  document.getElementById("acctFilterB").value = "";
+  document.getElementById("acctFilterOwnAccount").value = "";
+  document.getElementById("acctFilterValue").value = "";
   document.getElementById("acctFilter").classList.remove("filtering");
+  document.getElementById("acctFilterHint").textContent = "";
   document.getElementById("searchBox").value = "";
   searchQuery = "";
 }
 
 function populateAcctFilterColumn(columns) {
   const sel = document.getElementById("acctFilterCol");
-  sel.innerHTML = '<option value="">— kolona sa brojem računa —</option>';
+  sel.innerHTML = '<option value="">— kolona —</option>';
   columns.forEach(c => {
     const opt = document.createElement("option");
     opt.value = c;
     opt.textContent = c;
     sel.appendChild(opt);
   });
-  const guess = columns.find(c => normalize(c).includes("racun")) ||
+  const guess = columns.find(c => normalize(c).includes("payeeaccountinfo")) ||
+                columns.find(c => normalize(c).includes("primalac")) ||
+                columns.find(c => normalize(c).includes("poverilac")) ||
+                columns.find(c => normalize(c).includes("racun")) ||
                 columns.find(c => normalize(c).includes("acct")) ||
                 columns.find(c => normalize(c).includes("iban")) ||
                 columns.find(c => normalize(c).includes("duznik")) ||
                 columns.find(c => normalize(c).includes("platilac"));
   if (guess) sel.value = guess;
+}
+
+function populateOwnAccountFilter() {
+  const sel = document.getElementById("acctFilterOwnAccount");
+  const prevValue = sel.value;
+  const seen = new Map(); // account -> Set(source files)
+  currentRows.forEach(r => {
+    const acc = r.raw.__own_account;
+    if (!acc) return;
+    const file = r.raw.__source_file || "";
+    if (!seen.has(acc)) seen.set(acc, new Set());
+    seen.get(acc).add(file);
+  });
+
+  sel.innerHTML = '<option value="">— svi računi —</option>';
+  Array.from(seen.keys()).sort().forEach(acc => {
+    const files = Array.from(seen.get(acc)).join(", ");
+    const opt = document.createElement("option");
+    opt.value = acc;
+    opt.textContent = files ? `${acc} — ${files}` : acc;
+    sel.appendChild(opt);
+  });
+
+  if (prevValue && seen.has(prevValue)) sel.value = prevValue;
+}
+
+// ---- Transfer između računa: fokusirana pretraga (Račun A, Račun B, period, PDF izvoz) ----
+let transferMatchedRows = [];
+
+function guessTransferColumns() {
+  const cols = currentColumns;
+  const acctBCol = cols.find(c => normalize(c).includes("payeeaccountinfo")) ||
+                   cols.find(c => normalize(c).includes("primalac")) ||
+                   cols.find(c => normalize(c).includes("poverilac")) ||
+                   cols.find(c => normalize(c).includes("racun")) ||
+                   cols.find(c => normalize(c).includes("acct")) ||
+                   cols.find(c => normalize(c).includes("iban"));
+  const dateCol = cols.find(c => normalize(c).includes("dtposted")) ||
+                  cols.find(c => normalize(c).includes("datum")) ||
+                  cols.find(c => normalize(c).includes("date"));
+  const amountCol = cols.find(c => normalize(c).includes("trnamt")) ||
+                     cols.find(c => normalize(c).includes("iznos")) ||
+                     cols.find(c => normalize(c).includes("amount"));
+  return { acctBCol, dateCol, amountCol };
+}
+
+function parseFlexibleDate(str) {
+  if (!str) return null;
+  const s = String(str).trim();
+  let m = s.match(/^(\d{4})(\d{2})(\d{2})/); // YYYYMMDD (npr. OFX dtposted)
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // YYYY-MM-DD
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/); // DD.MM.YYYY ili DD/MM/YYYY
+  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  return null;
+}
+
+function populateTransferSearchAccountA() {
+  const sel = document.getElementById("transferAcctA");
+  const prevValue = sel.value;
+  const seen = new Map();
+  currentRows.forEach(r => {
+    const acc = r.raw.__own_account;
+    if (!acc) return;
+    const file = r.raw.__source_file || "";
+    if (!seen.has(acc)) seen.set(acc, new Set());
+    seen.get(acc).add(file);
+  });
+  sel.innerHTML = '<option value="">— svi računi —</option>';
+  Array.from(seen.keys()).sort().forEach(acc => {
+    const files = Array.from(seen.get(acc)).join(", ");
+    const opt = document.createElement("option");
+    opt.value = acc;
+    opt.textContent = files ? `${acc} — ${files}` : acc;
+    sel.appendChild(opt);
+  });
+  if (prevValue && seen.has(prevValue)) sel.value = prevValue;
+}
+
+function renderTransferSearch() {
+  const { acctBCol, dateCol, amountCol } = guessTransferColumns();
+
+  const acctA = document.getElementById("transferAcctA").value;
+  const acctB = document.getElementById("transferAcctB").value.trim().toLowerCase();
+  const dateFrom = document.getElementById("transferDateFrom").value ? new Date(document.getElementById("transferDateFrom").value) : null;
+  const dateTo = document.getElementById("transferDateTo").value ? new Date(document.getElementById("transferDateTo").value) : null;
+
+  let matched = currentRows.filter(r => {
+    if (acctA && r.raw.__own_account !== acctA) return false;
+    if (acctB && acctBCol) {
+      const val = String(r.raw[acctBCol] ?? "").toLowerCase();
+      if (!val.includes(acctB)) return false;
+    }
+    if ((dateFrom || dateTo) && dateCol) {
+      const d = parseFlexibleDate(r.raw[dateCol]);
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+    return true;
+  });
+
+  transferMatchedRows = matched;
+
+  const tbody = document.getElementById("transferTbody");
+  if (!matched.length) {
+    tbody.innerHTML = `<tr><td colspan="5">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        Nijedan red ne odgovara ovoj pretrazi.
+      </div>
+    </td></tr>`;
+  } else {
+    tbody.innerHTML = matched.map(r => `<tr>
+      <td>${escapeHtml(dateCol ? (r.raw[dateCol] ?? "") : "")}</td>
+      <td>${escapeHtml(r.raw.__own_account ?? "")}</td>
+      <td>${escapeHtml(acctBCol ? (r.raw[acctBCol] ?? "") : "")}</td>
+      <td>${escapeHtml(amountCol ? (r.raw[amountCol] ?? "") : "")}</td>
+      <td>${escapeHtml(r.raw.__source_file ?? "")}</td>
+    </tr>`).join("");
+  }
+
+  document.getElementById("transferHint").textContent =
+    `Prikazano ${matched.length} od ${currentRows.length} red(ova).`;
+}
+
+["transferAcctA", "transferAcctB", "transferDateFrom", "transferDateTo"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => { if (currentRows.length) renderTransferSearch(); });
+  document.getElementById(id).addEventListener("change", () => { if (currentRows.length) renderTransferSearch(); });
+});
+
+document.getElementById("transferExportPdfBtn").addEventListener("click", async () => {
+  if (!currentBatchId) return;
+  if (!transferMatchedRows.length) {
+    showErr("Nema redova za izvoz — trenutna pretraga ne pogađa nijedan red.");
+    return;
+  }
+  const rowIndices = transferMatchedRows.map(r => r.idx);
+  try {
+    const resp = await fetch(`/api/batches/${currentBatchId}/export_filtered.pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ row_indices: rowIndices }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      showErr(data.error || "Greška pri izvozu.");
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `paycheck-sentinel-batch${currentBatchId}-transfer.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showErr("Greška u komunikaciji sa serverom: " + err.message);
+  }
+});
+
+async function loadRawRows(batchId) {
+  try {
+    const resp = await fetch(`/api/batches/${batchId}/results`);
+    const data = await resp.json();
+    if (!resp.ok) return;
+    currentRows = data.rows;
+    currentMode = document.querySelector('input[name="analysisMode"]:checked').value;
+    currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
+    populateOwnAccountFilter();
+    populateTransferSearchAccountA();
+    if (document.querySelector('input[name="analysisMode"]:checked').value === "transfer") renderTransferSearch();
+    renderResults();
+  } catch (err) {
+    // preview je best-effort - ako ne uspe, rezultati ce se pojaviti nakon Analiziraj klika
+  }
 }
 
 function populateColumnSelectors(columns) {
@@ -317,80 +505,7 @@ function populateBankColumnSelectors(columns) {
   if (dateGuess) dateSel.value = dateGuess;
 }
 
-function populateTransferColumnSelectors(columns) {
-  const fromSel = document.getElementById("colFrom");
-  const toSel = document.getElementById("colTo");
-  const amountSel = document.getElementById("colTransferAmount");
-  const dateSel = document.getElementById("colTransferDate");
-
-  fillSelect(fromSel, columns, false);
-  fillSelect(toSel, columns, false);
-  fillSelect(amountSel, columns, true);
-  fillSelect(dateSel, columns, true);
-
-  const fromGuess = columns.find(c => normalize(c).includes("nalogodavac")) ||
-                     columns.find(c => normalize(c).includes("duznik")) ||
-                     columns.find(c => normalize(c).includes("platilac")) ||
-                     columns.find(c => normalize(c).includes("racun"));
-  const toGuess = columns.find(c => c !== fromGuess && normalize(c).includes("primalac")) ||
-                  columns.find(c => c !== fromGuess && normalize(c).includes("poverilac")) ||
-                  columns.find(c => c !== fromGuess && normalize(c).includes("racun"));
-  const amountGuess = columns.find(c => normalize(c).includes("iznos")) ||
-                      columns.find(c => normalize(c).includes("trnamt")) ||
-                      columns.find(c => normalize(c).includes("amount"));
-  const dateGuess = columns.find(c => normalize(c).includes("datum")) ||
-                     columns.find(c => normalize(c).includes("dtposted"));
-
-  if (fromGuess) fromSel.value = fromGuess;
-  if (toGuess) toSel.value = toGuess;
-  if (amountGuess) amountSel.value = amountGuess;
-  if (dateGuess) dateSel.value = dateGuess;
-}
-
-document.getElementById("analyzeTransferBtn").addEventListener("click", runTransferAnalysis);
 document.getElementById("analyzeBankBtn").addEventListener("click", runBankAnalysis);
-
-async function runTransferAnalysis() {
-  if (!currentBatchId) return;
-
-  const accountFrom = document.getElementById("accountFrom").value.trim();
-  const accountTo = document.getElementById("accountTo").value.trim();
-  if (!accountFrom && !accountTo) {
-    showErr("Unesi bar jedan broj računa (A ili B).");
-    return;
-  }
-
-  const body = {
-    from_col: document.getElementById("colFrom").value,
-    to_col: document.getElementById("colTo").value,
-    amount_col: (() => { const v = document.getElementById("colTransferAmount").value; return v === NONE ? null : v; })(),
-    date_col: (() => { const v = document.getElementById("colTransferDate").value; return v === NONE ? null : v; })(),
-    account_from: accountFrom,
-    account_to: accountTo,
-  };
-
-  try {
-    const resp = await fetch(`/api/batches/${currentBatchId}/analyze_transfer`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      showErr(data.error || "Greška pri analizi.");
-      return;
-    }
-
-    currentRows = data.rows;
-    currentMode = "transfer";
-    currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
-    renderResults();
-    setStep(3);
-    loadHistory();
-  } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
-  }
-}
 
 async function runBankAnalysis() {
   if (!currentBatchId) return;
@@ -421,6 +536,9 @@ async function runBankAnalysis() {
     currentRows = data.rows;
     currentMode = "bank";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
+    populateOwnAccountFilter();
+    populateTransferSearchAccountA();
+    if (document.querySelector('input[name="analysisMode"]:checked').value === "transfer") renderTransferSearch();
     renderResults();
     setStep(3);
     loadHistory();
@@ -472,6 +590,9 @@ async function runAnalysis() {
     currentRows = data.rows;
     currentMode = "generic";
     currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
+    populateOwnAccountFilter();
+    populateTransferSearchAccountA();
+    if (document.querySelector('input[name="analysisMode"]:checked').value === "transfer") renderTransferSearch();
     renderResults();
     setStep(3);
     loadHistory();
@@ -483,7 +604,7 @@ async function runAnalysis() {
 function computeClientStats(rows) {
   const active = rows.filter(r => !r.is_false_alarm);
   const flagged = active.filter(r => r.flags.length > 0);
-  const fullType = currentMode === "bank" ? "circular_confirmed" : (currentMode === "transfer" ? "transfer" : "full");
+  const fullType = currentMode === "bank" ? "circular_confirmed" : "full";
   const fullRows = active.filter(r => r.flags.some(f => f.type === fullType));
   let fullSum = fullRows.reduce((acc, r) => acc + (r.paid_amount || 0), 0);
   if (currentMode === "bank") fullSum = fullSum / 2; // par se racuna 2x (debit+credit)
@@ -553,7 +674,7 @@ function renderResults() {
     return `<th onclick="setSort('${cd.key.replace(/'/g, "\\'")}')">${escapeHtml(cd.label)}${arrow}</th>`;
   }).join("");
 
-  const fullType = currentMode === "bank" ? "circular_confirmed" : (currentMode === "transfer" ? "transfer" : "full");
+  const fullType = currentMode === "bank" ? "circular_confirmed" : "full";
   let toShow = currentRows;
   if (viewFilter === "flagged") {
     toShow = toShow.filter(r => r.flags.length > 0);
@@ -561,17 +682,20 @@ function renderResults() {
     toShow = toShow.filter(r => r.flags.some(f => f.type === fullType));
   }
 
+  const acctA = document.getElementById("acctFilterOwnAccount").value;
   const acctCol = document.getElementById("acctFilterCol").value;
-  const acctA = document.getElementById("acctFilterA").value.trim().toLowerCase();
-  const acctB = document.getElementById("acctFilterB").value.trim().toLowerCase();
-  if (acctCol && (acctA || acctB)) {
+  const acctValue = document.getElementById("acctFilterValue").value.trim().toLowerCase();
+  const acctHint = document.getElementById("acctFilterHint");
+  if (acctA || (acctCol && acctValue)) {
+    const beforeCount = toShow.length;
     toShow = toShow.filter(r => {
-      const val = String(r.raw[acctCol] ?? "").toLowerCase();
-      const matchA = acctA && val.includes(acctA);
-      const matchB = acctB && val.includes(acctB);
-      if (acctA && acctB) return matchA || matchB;
-      return matchA || matchB;
+      const matchA = !acctA || r.raw.__own_account === acctA;
+      const matchB = !(acctCol && acctValue) || String(r.raw[acctCol] ?? "").toLowerCase().includes(acctValue);
+      return matchA && matchB;
     });
+    acctHint.textContent = `Filter aktivan — prikazano ${toShow.length} od ${beforeCount} red(ova).`;
+  } else {
+    acctHint.textContent = "";
   }
 
   if (searchQuery.trim() !== "") {
@@ -590,12 +714,14 @@ function renderResults() {
     toShow = [...toShow].sort((a, b) => compareValues(getSortValue(a, sortCol), getSortValue(b, sortCol)) * sortDir);
   }
 
+  lastRenderedRows = toShow;
+
   tbody.innerHTML = toShow.map(r => {
     const cells = currentColumns.map(c => `<td>${escapeHtml(r.raw[c] ?? "")}</td>`).join("");
     const badges = r.flags.length
       ? r.flags.map(f => `<span class="badge ${f.type}">${f.label}</span>`).join("")
       : '<span class="badge ok">OK</span>';
-    const isFull = r.flags.some(f => f.type === "full" || f.type === "circular_confirmed" || f.type === "transfer");
+    const isFull = r.flags.some(f => f.type === "full" || f.type === "circular_confirmed");
     let rowClass = isFull ? "flagged-full" : (r.flags.length ? "flagged-warn" : "");
     if (r.is_false_alarm) rowClass += " false-alarm";
     const checkboxCell = `<td class="no-strike"><input type="checkbox" ${r.is_false_alarm ? "checked" : ""} onchange="toggleFalseAlarm(${r.idx}, this.checked)"></td>`;
@@ -621,11 +747,7 @@ function renderResults() {
   const legendBox = document.getElementById("legendBox");
   const statFullLabel = document.querySelector("#statFull").closest(".stat").querySelector(".l");
   const statSumLabel = document.querySelector("#statSum").closest(".stat").querySelector(".l");
-  if (currentMode === "transfer") {
-    legendBox.innerHTML = `<span><span class="badge transfer">TRANSFER A→B</span> transakcija između zadatih računa</span>`;
-    statFullLabel.textContent = "Pronađenih transfera";
-    statSumLabel.textContent = "Ukupan iznos transfera";
-  } else if (currentMode === "bank") {
+  if (currentMode === "bank") {
     legendBox.innerHTML = `
       <span><span class="badge circular_confirmed">POVRAT (ref. broj)</span> pouzdano uparen povrat</span>
       <span><span class="badge circular_possible">MOGUĆ POVRAT (iznos)</span> uparen po iznosu/datumu</span>`;
@@ -656,21 +778,31 @@ document.querySelectorAll("#viewFilterGroup .seg-btn").forEach(btn => {
   });
 });
 
-["acctFilterCol", "acctFilterA", "acctFilterB"].forEach(id => {
+["acctFilterOwnAccount", "acctFilterCol", "acctFilterValue"].forEach(id => {
   document.getElementById(id).addEventListener("input", () => {
-    const a = document.getElementById("acctFilterA").value.trim();
-    const b = document.getElementById("acctFilterB").value.trim();
-    document.getElementById("acctFilter").classList.toggle("filtering", !!(a || b));
+    const a = document.getElementById("acctFilterOwnAccount").value;
+    const v = document.getElementById("acctFilterValue").value.trim();
+    document.getElementById("acctFilter").classList.toggle("filtering", !!(a || v));
     if (currentRows.length) renderResults();
   });
   document.getElementById(id).addEventListener("change", () => {
     if (currentRows.length) renderResults();
   });
+  document.getElementById(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && currentRows.length) renderResults();
+  });
+});
+
+document.getElementById("acctFilterApply").addEventListener("click", () => {
+  const a = document.getElementById("acctFilterOwnAccount").value;
+  const v = document.getElementById("acctFilterValue").value.trim();
+  document.getElementById("acctFilter").classList.toggle("filtering", !!(a || v));
+  if (currentRows.length) renderResults();
 });
 
 document.getElementById("acctFilterClear").addEventListener("click", () => {
-  document.getElementById("acctFilterA").value = "";
-  document.getElementById("acctFilterB").value = "";
+  document.getElementById("acctFilterOwnAccount").value = "";
+  document.getElementById("acctFilterValue").value = "";
   document.getElementById("acctFilter").classList.remove("filtering");
   if (currentRows.length) renderResults();
 });
@@ -707,6 +839,38 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
 document.getElementById("exportAllPdfBtn").addEventListener("click", () => {
   if (!currentBatchId) return;
   window.location.href = `/api/batches/${currentBatchId}/export.pdf?only_flagged=0`;
+});
+
+document.getElementById("exportFilteredPdfBtn").addEventListener("click", async () => {
+  if (!currentBatchId) return;
+  if (!lastRenderedRows.length) {
+    showErr("Nema redova za izvoz — trenutni filter ne pogađa nijedan red.");
+    return;
+  }
+  const rowIndices = lastRenderedRows.map(r => r.idx);
+  try {
+    const resp = await fetch(`/api/batches/${currentBatchId}/export_filtered.pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ row_indices: rowIndices }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      showErr(data.error || "Greška pri izvozu filtriranih rezultata.");
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `paycheck-sentinel-batch${currentBatchId}-filtrirano.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    showErr("Greška u komunikaciji sa serverom: " + err.message);
+  }
 });
 
 async function loadHistory() {
@@ -756,7 +920,7 @@ async function openBatch(batchId) {
   currentBatchId = batchId;
   currentColumns = data.batch.columns_json;
   currentRows = data.rows;
-  currentMode = data.batch.mode === "bank_statement" ? "bank" : (data.batch.mode === "transfer" ? "transfer" : "generic");
+  currentMode = data.batch.mode === "bank_statement" ? "bank" : "generic";
   currentFlaggedRows = currentRows.filter(r => r.flags.length > 0);
 
   document.getElementById("rowCount").textContent = data.batch.row_count;
@@ -765,8 +929,9 @@ async function openBatch(batchId) {
   document.getElementById("dzText").textContent = `Otvoren batch #${batchId} — ${data.batch.row_count} redova`;
 
   populateColumnSelectors(currentColumns);
-  populateTransferColumnSelectors(currentColumns);
   populateAcctFilterColumn(currentColumns);
+  populateOwnAccountFilter();
+  populateTransferSearchAccountA();
   resetResultFilters();
 
   // popuni prethodno mapiranje ako postoji
@@ -784,21 +949,10 @@ async function openBatch(batchId) {
   document.getElementById("checkOutlier").checked = !!data.batch.check_outlier;
   refreshCheckAvailability();
 
-  if (data.batch.mode === "transfer") {
-    if (data.batch.from_col) document.getElementById("colFrom").value = data.batch.from_col;
-    if (data.batch.to_col) document.getElementById("colTo").value = data.batch.to_col;
-    if (data.batch.amount_col) document.getElementById("colTransferAmount").value = data.batch.amount_col;
-    if (data.batch.date_col) document.getElementById("colTransferDate").value = data.batch.date_col;
-    document.getElementById("accountFrom").value = data.batch.account_from ?? "";
-    document.getElementById("accountTo").value = data.batch.account_to ?? "";
-  }
-
   document.getElementById("mapPanel").classList.remove("hidden");
 
   if (currentMode === "bank") {
     document.getElementById("modeBank").checked = true;
-  } else if (currentMode === "transfer") {
-    document.getElementById("modeTransfer").checked = true;
   } else {
     document.getElementById("modeGeneric").checked = true;
   }

@@ -429,6 +429,43 @@ def api_export_pdf(batch_id):
     return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
+@app.route("/api/batches/<int:batch_id>/export_filtered.pdf", methods=["POST"])
+def api_export_filtered_pdf(batch_id):
+    conn = get_conn()
+    batch = db.get_batch(conn, batch_id)
+    if not batch:
+        return jsonify({"error": "Batch nije pronadjen."}), 404
+
+    body = request.get_json(force=True) or {}
+    row_indices = set(body.get("row_indices") or [])
+    if not row_indices:
+        return jsonify({"error": "Nema redova za izvoz (filter ne pogađa nijedan red)."}), 400
+
+    all_txns = db.get_transactions(conn, batch_id)
+    columns = _json_or_empty(batch["columns_json"])
+    mode = batch.get("mode") or "generic"
+
+    txns = [t for t in all_txns if t["idx"] in row_indices]
+
+    active = [t for t in txns if not t.get("is_false_alarm")]
+    full_flag_type = "circular_confirmed" if mode == "bank_statement" else ("transfer" if mode == "transfer" else "full")
+    full_rows = [t for t in active if any(f["type"] == full_flag_type for f in t["flags"])]
+
+    stats = {
+        "total": len(txns),
+        "flagged_count": len([t for t in active if t["flags"]]),
+        "full_count": len(full_rows),
+        "full_sum": round(sum((t["paid_amount"] or 0) for t in full_rows), 2),
+    }
+    if mode == "bank_statement":
+        stats["confirmed_count"] = stats["full_count"]
+        stats["confirmed_sum"] = round(stats["full_sum"] / 2, 2) if full_rows else 0
+
+    pdf_buf = build_pdf_report(batch, columns, txns, stats, True, mode, "filtered")
+    filename = f"paycheck-sentinel-batch{batch_id}-filtrirano.pdf"
+    return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
 def _json_or_empty(s):
     import json
     try:

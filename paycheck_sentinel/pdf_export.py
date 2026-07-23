@@ -83,6 +83,7 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
         "full": "Izveštaj o punom povratu",
         "flagged": "Izveštaj o upozorenjima",
         "all": "Izveštaj o svim transakcijama",
+        "filtered": "Izveštaj o filtriranim rezultatima",
     }
     title_text = titles.get(report_kind, "Izveštaj o upozorenjima")
     story.append(Paragraph(title_text, title_style))
