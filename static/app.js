@@ -554,6 +554,7 @@ function renderResults() {
   }).join("");
 
   const fullType = currentMode === "bank" ? "circular_confirmed" : (currentMode === "transfer" ? "transfer" : "full");
+  let toShow = currentRows;
   if (viewFilter === "flagged") {
     toShow = toShow.filter(r => r.flags.length > 0);
   } else if (viewFilter === "full") {
