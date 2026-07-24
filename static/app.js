@@ -379,11 +379,17 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
     return;
   }
   const rowIndices = transferMatchedRows.map(r => r.idx);
+  const { acctBCol, dateCol, amountCol } = guessTransferColumns();
+  const displayColumns = ["__source_file", "__own_account", dateCol, acctBCol, amountCol].filter(Boolean);
+  const columnLabels = {};
+  if (dateCol) columnLabels[dateCol] = "Datum";
+  if (acctBCol) columnLabels[acctBCol] = "Račun B";
+  if (amountCol) columnLabels[amountCol] = "Iznos";
   try {
     const resp = await fetch(`/api/batches/${currentBatchId}/export_filtered.pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ row_indices: rowIndices }),
+      body: JSON.stringify({ row_indices: rowIndices, display_columns: displayColumns, column_labels: columnLabels }),
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));

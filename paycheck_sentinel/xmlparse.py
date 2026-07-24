@@ -54,6 +54,13 @@ def find_own_account(root):
     return None
 
 
+def _walk_with_depth(el, depth=0):
+    """Rekurzivno prolazi kroz stablo, vracajuci (element, dubina) parove."""
+    yield el, depth
+    for child in el:
+        yield from _walk_with_depth(child, depth + 1)
+
+
 def parse_xml_text(xml_text: str):
     """
     Vraca (rows, columns, own_account):
@@ -71,18 +78,41 @@ def parse_xml_text(xml_text: str):
 
     own_account = find_own_account(root)
 
-    all_elements = list(root.iter())
+    elements_with_depth = list(_walk_with_depth(root))
+    all_elements = [el for el, _ in elements_with_depth]
 
     freq = Counter(_local_tag(el.tag) for el in all_elements)
 
     best_tag = None
     best_count = 0
+
+    # 1. prolaz: tag koji se ponavlja vise puta u celom dokumentu i nosi kolone
+    #    (najpouzdaniji signal - klasican slucaj vise transakcija u fajlu)
     for el in all_elements:
         tag = _local_tag(el.tag)
         if freq[tag] > 1 and len(list(el)) > 0:
             if freq[tag] > best_count:
                 best_count = freq[tag]
                 best_tag = tag
+
+    # 2. prolaz (fallback): fajl moze imati samo JEDNU transakciju (npr. mali
+    #    izvod za jedan konkretan predmet/nalog), pa nijedan tag nema freq>1.
+    #    Tada trazimo "homogen kontejner" — element ciji su SVI deca isti tag
+    #    (makar i samo jedno dete), sto je znak da je taj tag po prirodi red
+    #    liste. Biramo najdublji/najspecificniji takav tag (npr. stmttrn unutar
+    #    banktranlist, a ne stmtrs unutar stmtrslist).
+    if best_tag is None:
+        candidates = []
+        for parent, depth in elements_with_depth:
+            children = list(parent)
+            if not children:
+                continue
+            child_tags = [_local_tag(c.tag) for c in children]
+            if len(set(child_tags)) == 1 and len(list(children[0])) > 0:
+                candidates.append((child_tags[0], len(children), depth + 1))
+        if candidates:
+            candidates.sort(key=lambda c: (-c[2], -c[1]))
+            best_tag = candidates[0][0]
 
     if best_tag is None:
         raise XMLParseError("Nisam uspeo da prepoznam ponavljajuce redove u XML-u.")

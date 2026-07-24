@@ -146,6 +146,7 @@ def api_upload():
     file_names = []
     errors = []
     own_account = None
+    own_accounts = []
 
     for f in files:
         if not f.filename.lower().endswith(".xml"):
@@ -157,6 +158,8 @@ def api_upload():
             rows, cols, file_own_account = parse_xml_text(text)
             if file_own_account and not own_account:
                 own_account = file_own_account
+            if file_own_account:
+                own_accounts.append({"file": f.filename, "account": file_own_account})
         except XMLParseError as e:
             errors.append(f"{f.filename}: {e}")
             continue
@@ -168,6 +171,7 @@ def api_upload():
 
         for r in rows:
             r["__source_file"] = f.filename
+            r["__own_account"] = file_own_account or ""
         combined_rows.extend(rows)
 
     if not combined_rows:
@@ -187,6 +191,7 @@ def api_upload():
         "file_names": file_names,
         "errors": errors,
         "own_account": own_account,
+        "own_accounts": own_accounts,
     })
 
 
@@ -441,6 +446,9 @@ def api_export_filtered_pdf(batch_id):
     if not row_indices:
         return jsonify({"error": "Nema redova za izvoz (filter ne pogađa nijedan red)."}), 400
 
+    requested_columns = body.get("display_columns")
+    requested_labels = body.get("column_labels") or {}
+
     all_txns = db.get_transactions(conn, batch_id)
     columns = _json_or_empty(batch["columns_json"])
     mode = batch.get("mode") or "generic"
@@ -461,7 +469,14 @@ def api_export_filtered_pdf(batch_id):
         stats["confirmed_count"] = stats["full_count"]
         stats["confirmed_sum"] = round(stats["full_sum"] / 2, 2) if full_rows else 0
 
-    pdf_buf = build_pdf_report(batch, columns, txns, stats, True, mode, "filtered")
+    display_columns_override = None
+    if requested_columns:
+        # dozvoli samo kolone koje stvarno postoje u podacima (ili nase interno
+        # __own_account/__source_file polje), da izbegnemo prazne kolone u PDF-u
+        allowed = set(columns) | {"__own_account", "__source_file"}
+        display_columns_override = [c for c in requested_columns if c in allowed]
+
+    pdf_buf = build_pdf_report(batch, columns, txns, stats, True, mode, "filtered", display_columns_override=display_columns_override, column_labels_override=requested_labels)
     filename = f"paycheck-sentinel-batch{batch_id}-filtrirano.pdf"
     return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 

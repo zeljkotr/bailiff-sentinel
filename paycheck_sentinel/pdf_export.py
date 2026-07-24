@@ -35,7 +35,7 @@ def _ensure_fonts():
     _FONTS_REGISTERED = True
 
 
-def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kind="flagged"):
+def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kind="flagged", display_columns_override=None, column_labels_override=None):
     """
     Vraca BytesIO sa gotovim PDF-om.
 
@@ -47,10 +47,17 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     stats: dict sa statistikom (total, flagged_count, itd.)
     only_flagged: bool — da li je izvestaj filtriran samo na flagovane redove
     mode: 'generic' ili 'bank_statement'
+    display_columns_override: list[str] | None — ako je zadato, koristi se
+           tacno ovaj (uzi, unapred odabrani) skup kolona umesto automatskog
+           pogadjanja po modu. Koristi se npr. za fokusiranu pretragu
+           transfera gde nema klasicnog mapiranja kolona.
+    column_labels_override: dict[str, str] | None — citljivi naziv za pojedine
+           kolone (npr. {"dtposted": "Datum"}) umesto sirovog XML naziva taga.
     """
     _ensure_fonts()
 
-    display_columns = _pick_display_columns(batch, columns, mode)
+    display_columns = display_columns_override if display_columns_override else _pick_display_columns(batch, columns, mode)
+    column_labels_override = column_labels_override or {}
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -133,7 +140,7 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     story.append(Spacer(1, 6 * mm))
 
     # glavna tabela transakcija
-    header_row = [Paragraph(_column_label(c), header_style) for c in display_columns] + \
+    header_row = [Paragraph(column_labels_override.get(c) or _column_label(c), header_style) for c in display_columns] + \
                  [Paragraph("Upozorenja", header_style)]
 
     table_data = [header_row]
@@ -218,6 +225,8 @@ def _column_label(col):
     """Skraceni naziv kolone za zaglavlje tabele (npr. 'payeeaccountinfo.acctid' -> 'acctid')."""
     if col == "__source_file":
         return "Fajl"
+    if col == "__own_account":
+        return "Račun A"
     return col.split(".")[-1]
 
 
