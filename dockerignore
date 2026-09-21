@@ -1,0 +1,15 @@
+# Ne kopiraj lokalno virtuelno okruzenje - image pravi svoje cisto okruzenje
+venv/
+__pycache__/
+*.pyc
+
+# Ne kopiraj lokalnu SQLite bazu - kontejner treba da krene sa cistom/mount-ovanom bazom
+instance/
+
+# Git metadata nije potreban unutar image-a
+.git/
+.gitignore
+
+# CI/CD i editor fajlovi
+.github/
+.vscode/

@@ -13,7 +13,9 @@ import io
 import os
 import time
 
-from flask import Flask, jsonify, render_template, request, send_file, g
+from flask import Flask, jsonify, render_template, request, send_file, g, Response
+
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from paycheck_sentinel import db
 from paycheck_sentinel.checks import analyze, analyze_circular_refund, analyze_transfer
@@ -28,6 +30,33 @@ os.makedirs(INSTANCE_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit
+
+# --- Prometheus aplikacione (biznis) metrike ---
+# Ovo su metrike o TOME STA APLIKACIJA RADI, ne o serveru/infrastrukturi
+# (za infrastrukturu - CPU/RAM/disk - koristimo node_exporter, odvojeno).
+
+xml_files_parsed_total = Counter(
+    "paycheck_sentinel_xml_files_parsed_total",
+    "Broj obradjenih XML fajlova, po statusu parsiranja",
+    ["status"],  # "success" ili "failure"
+)
+
+anomalies_detected_total = Counter(
+    "paycheck_sentinel_anomalies_detected_total",
+    "Broj detektovanih anomalija, po tipu i modu analize",
+    ["anomaly_type", "mode"],
+)
+
+upload_processing_seconds = Histogram(
+    "paycheck_sentinel_upload_processing_seconds",
+    "Vreme obrade /api/upload zahteva (parsiranje XML fajlova) u sekundama",
+)
+
+analysis_processing_seconds = Histogram(
+    "paycheck_sentinel_analysis_processing_seconds",
+    "Vreme obrade analize (analyze/analyze_bank/analyze_transfer) u sekundama",
+    ["mode"],
+)
 
 
 def get_conn():
@@ -83,6 +112,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/metrics")
+def metrics():
+    # Prometheus scrape-uje ovu rutu (default svakih 15s, po nasoj prometheus.yml konfiguraciji)
+    # i cita sve Counter/Histogram metrike definisane gore u fajlu.
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+
 @app.route("/api/batches", methods=["GET"])
 def api_list_batches():
     conn = get_conn()
@@ -136,6 +172,7 @@ def _decode_xml_bytes(raw_bytes):
 
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
+    upload_start = time.time()
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "Nijedan fajl nije poslat."}), 400
@@ -162,7 +199,10 @@ def api_upload():
                 own_accounts.append({"file": f.filename, "account": file_own_account})
         except XMLParseError as e:
             errors.append(f"{f.filename}: {e}")
+            xml_files_parsed_total.labels(status="failure").inc()
             continue
+
+        xml_files_parsed_total.labels(status="success").inc()
 
         for c in cols:
             if c not in seen_cols:
@@ -175,6 +215,7 @@ def api_upload():
         combined_rows.extend(rows)
 
     if not combined_rows:
+        upload_processing_seconds.observe(time.time() - upload_start)
         return jsonify({
             "error": "Nijedan red nije uspesno ucitan.",
             "details": errors,
@@ -183,6 +224,8 @@ def api_upload():
     label = file_names[0] if len(file_names) == 1 else f"{len(file_names)} fajlova"
     conn = get_conn()
     batch_id = db.create_batch(conn, label, file_names, combined_columns, combined_rows, own_account)
+
+    upload_processing_seconds.observe(time.time() - upload_start)
 
     return jsonify({
         "batch_id": batch_id,
@@ -197,6 +240,7 @@ def api_upload():
 
 @app.route("/api/batches/<int:batch_id>/analyze_bank", methods=["POST"])
 def api_analyze_bank(batch_id):
+    analyze_start = time.time()
     conn = get_conn()
     batch = db.get_batch(conn, batch_id)
     if not batch:
@@ -240,11 +284,16 @@ def api_analyze_bank(batch_id):
         "confirmed_sum": round(sum_confirmed, 2),
     }
 
+    anomalies_detected_total.labels(anomaly_type="circular_confirmed", mode="bank_statement").inc(len(confirmed))
+    anomalies_detected_total.labels(anomaly_type="circular_possible", mode="bank_statement").inc(len(possible))
+    analysis_processing_seconds.labels(mode="bank_statement").observe(time.time() - analyze_start)
+
     return jsonify({"rows": refreshed, "stats": stats})
 
 
 @app.route("/api/batches/<int:batch_id>/analyze_transfer", methods=["POST"])
 def api_analyze_transfer(batch_id):
+    analyze_start = time.time()
     conn = get_conn()
     batch = db.get_batch(conn, batch_id)
     if not batch:
@@ -284,6 +333,9 @@ def api_analyze_transfer(batch_id):
         "full_sum": round(total_amount, 2),
     }
 
+    anomalies_detected_total.labels(anomaly_type="transfer", mode="transfer").inc(len(matched))
+    analysis_processing_seconds.labels(mode="transfer").observe(time.time() - analyze_start)
+
     return jsonify({"rows": refreshed, "stats": stats})
 
 
@@ -306,6 +358,7 @@ def api_set_false_alarm(batch_id):
 
 @app.route("/api/batches/<int:batch_id>/analyze", methods=["POST"])
 def api_analyze(batch_id):
+    analyze_start = time.time()
     conn = get_conn()
     batch = db.get_batch(conn, batch_id)
     if not batch:
@@ -339,6 +392,10 @@ def api_analyze(batch_id):
 
     refreshed = db.get_transactions(conn, batch_id)
     stats = _compute_stats(refreshed)
+
+    anomalies_detected_total.labels(anomaly_type="full", mode="generic").inc(stats["full_count"])
+    analysis_processing_seconds.labels(mode="generic").observe(time.time() - analyze_start)
+
     return jsonify({"rows": refreshed, "stats": stats})
 
 
