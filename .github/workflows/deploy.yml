@@ -28,10 +28,15 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-      - name: Deploy to meshcorers
+      - name: Deploy to vmdev (Docker)
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
-            "cd ~/bailiff-sentinel && git pull && venv/bin/pip install -r requirements.txt && sudo systemctl restart paycheck-sentinel"
+            "cd ~/bailiff-sentinel && \
+             git pull && \
+             docker build -t bailiff-sentinel:latest . && \
+             docker stop bailiff-sentinel || true && \
+             docker rm bailiff-sentinel || true && \
+             docker run -d --name bailiff-sentinel --restart=on-failure -p 5000:5000 bailiff-sentinel:latest"
       - name: Health check
         run: |
           sleep 3
