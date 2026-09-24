@@ -8,7 +8,7 @@ Type=simple
 # Prilagodi User i WorkingDirectory tvojoj instalaciji na serveru
 User=zeljko
 WorkingDirectory=/home/zeljko/bailiff-sentinel
-ExecStart=/home/zeljko/bailiff-sentinel/venv/bin/python app.py
+ExecStart=/home/zeljko/bailiff-sentinel/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:5000 --timeout 120 app:app
 Restart=on-failure
 RestartSec=5
 
