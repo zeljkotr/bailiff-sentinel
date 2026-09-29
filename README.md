@@ -1,123 +1,18 @@
-# paycheck-sentinel
+# paycheck-sentinel (bailiff-sentinel)
 
-*Developed by Zeljko Tripcevski*
+A self-hosted Flask web application that analyzes XML bank statements and flags suspicious transactions. Everything runs on your own server: no data is sent to the internet, and it is accessible from any device on your network (or through a VPN from outside).
 
-Flask + SQLite aplikacija koja analizira XML izvode i otkriva sumnjive
-transakcije. Radi na tvom Ubuntu serveru, pristupaš joj preko browsera sa
-bilo kog uređaja u mreži (ili preko VPN-a spolja) — nema slanja podataka
-na internet, sve ostaje na tvom serveru.
+Data is stored in PostgreSQL and web sessions in Redis, so multiple app instances can run behind a load balancer and serve any request.
 
-- **Pun povrat** — dužnik platio na pogrešan račun, banka vratila ceo iznos
-- **Delimičan povrat** — banka vratila deo iznosa
-- **Duplikat broja naloga** — isti ID se pojavljuje više puta
-- **Duplikat uplate** — isti dužnik + isti iznos + isti datum ponovljeni
-- **Neuobičajen iznos (outlier)** — iznos mnogo veći od medijane svih uplata
+## What it detects
 
-Sve se čuva u SQLite bazi (`instance/paycheck_sentinel.db`) — istorija svih
-upload-a i analiza ostaje sačuvana između pokretanja.
+- **Full refund**: a debtor paid to the wrong account and the bank returned the entire amount
+- **Partial refund**: the bank returned only part of the amount
+- **Duplicate order ID**: the same ID appears more than once
+- **Duplicate payment**: the same debtor, amount and date repeated
+- **Outlier amount**: an amount far above the median of all payments
 
-## Instalacija na serveru (Ubuntu, npr. 192.168.2.39)
-
-**1. Prebaci projekat na server** (scp, git clone, ili kako već radiš):
-```bash
-scp -r paycheck-sentinel-flask zeljko@192.168.2.39:~/
-```
-
-**2. Uđi u folder i napravi venv:**
-```bash
-cd ~/paycheck-sentinel-flask
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-**3. Pokreni test:**
-```bash
-python app.py
-```
-Trebalo bi da ispiše `Running on http://0.0.0.0:5000`. Testiraj sa drugog uređaja u mreži: `http://192.168.2.39:5000`
-
-Prekini test sa Ctrl+C kad potvrdiš da radi, pa idi na trajno pokretanje ispod.
-
-## Trajno pokretanje — opcija A: tmux (jednostavnije, kao MeshCore projekat)
-
-```bash
-tmux new -s paycheck-sentinel
-cd ~/paycheck-sentinel-flask
-source venv/bin/activate
-python app.py
-```
-Detach sa `Ctrl+B` pa `D`. Aplikacija ostaje da radi u pozadini i posle
-zatvaranja SSH sesije. Za povratak: `tmux attach -t paycheck-sentinel`.
-
-**Nedostatak:** ako se server restartuje, moraš ručno ponovo da pokreneš tmux sesiju.
-
-## Trajno pokretanje — opcija B: systemd (automatski restart posle reboot-a)
-
-**1. Prilagodi `paycheck-sentinel.service`** — otvori fajl i izmeni `User` i
-`WorkingDirectory` na tvoje stvarne vrednosti (npr. korisničko ime na serveru
-i putanju gde si prebacio projekat).
-
-**2. Instaliraj servis:**
-```bash
-sudo cp paycheck-sentinel.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable paycheck-sentinel
-sudo systemctl start paycheck-sentinel
-```
-
-**3. Proveri status:**
-```bash
-sudo systemctl status paycheck-sentinel
-```
-
-**4. Logovi:**
-```bash
-journalctl -u paycheck-sentinel -f
-```
-
-Ovo automatski pokreće aplikaciju pri svakom boot-u servera i restartuje je
-ako padne (`Restart=on-failure`).
-
-## Pristup
-
-- Iz lokalne mreže: `http://192.168.2.39:5000` (zameni IP-jem tvog servera)
-- Spolja: preko VPN-a na tvoju mrežu, pa isti URL
-
-## Bezbednosna napomena
-
-Aplikacija nema login/autentifikaciju — bilo ko ko ima pristup mreži (ili
-VPN-u) može da je otvori. Pošto je pristup ograničen na tvoju privatnu mrežu
-+ VPN, to je razumna granica za privatnu upotrebu. Ako želiš dodatni sloj
-zaštite (npr. da neko na istoj mreži slučajno ne otvori tvoje finansijske
-podatke), javi — može se dodati jednostavan HTTP basic auth ili login sistem.
-
-## Struktura projekta
-
-```
-paycheck-sentinel-flask/
-  app.py                       - Flask rute (upload, analiza, export, istorija)
-  paycheck_sentinel/
-    xmlparse.py                - auto-detekcija redova/kolona u XML-u
-    checks.py                  - logika 5 provera
-    db.py                      - SQLite šema i pristup bazi
-  templates/index.html         - glavna stranica
-  static/style.css             - dark ops-console tema
-  static/app.js                - frontend logika (fetch pozivi ka API-ju)
-  instance/                    - SQLite baza (ne commit-uje se, pravi se automatski)
-  paycheck-sentinel.service    - systemd unit fajl za automatsko pokretanje
-  requirements.txt
-```
-
-## Napomena o podacima
-
-XML fajlovi sa realnim finansijskim podacima se **ne commit-uju** u repo
-(videti `.gitignore`). Baza sa realnim podacima (`instance/*.db`) takođe
-ostaje samo lokalno na serveru.
-
----
-Developed by Zeljko Tripcevski
-
+The full history of uploads and analyses is kept in the database between restarts.
 
 ## Quick start (Docker)
 
@@ -128,17 +23,22 @@ git clone https://github.com/zeljkotr/bailiff-sentinel.git
 cd bailiff-sentinel
 
 cp .env.example .env
-# edit .env: set DB_PASSWORD and FLASK_SECRET_KEY (openssl rand -hex 32)
+# edit .env: set DB_PASSWORD and FLASK_SECRET_KEY (generate with: openssl rand -hex 32)
 
 docker compose up -d --build
 ```
 
 Open http://localhost:5000. The database schema is created automatically on first start.
 
-To stop: `docker compose down` (data is kept in the `pgdata` volume).
-To wipe all data: `docker compose down -v`.
+- Stop: `docker compose down` (data is kept in the `pgdata` volume)
+- Wipe all data: `docker compose down -v`
+- Logs: `docker compose logs -f app`
+
+Compose starts three services: the app (Gunicorn), PostgreSQL and Redis. PostgreSQL and Redis are not published to the host; only the app port is.
 
 ## Configuration
+
+All configuration is done through environment variables (in Compose and in systemd, through the `.env` file).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -152,4 +52,100 @@ To wipe all data: `docker compose down -v`.
 | `REDIS_PORT` | no | `6379` | Redis port |
 | `APP_PORT` | no | `5000` | Host port used by Compose |
 
-The app fails at startup if a required variable is missing.
+The app refuses to start if a required variable is missing. Never commit your `.env` file.
+
+## Permanent installation (systemd)
+
+Requirements: Ubuntu server with Python 3.12+, PostgreSQL and Redis.
+
+**1. Install PostgreSQL and Redis**
+
+```bash
+sudo apt update
+sudo apt install -y postgresql redis-server python3-venv
+
+sudo -u postgres psql -c "CREATE USER bailiff WITH PASSWORD 'choose-a-strong-password';"
+sudo -u postgres psql -c "CREATE DATABASE bailiff OWNER bailiff;"
+```
+
+**2. Get the project and install dependencies**
+
+```bash
+git clone https://github.com/zeljkotr/bailiff-sentinel.git
+cd bailiff-sentinel
+
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+deactivate
+```
+
+**3. Configure**
+
+```bash
+cp .env.example .env
+chmod 600 .env
+# edit .env: set FLASK_SECRET_KEY (openssl rand -hex 32) and DB_PASSWORD
+# (the same password you used in the CREATE USER command above)
+```
+
+**4. Install the service**
+
+Open `paycheck-sentinel.service` and change `User`, `Group`, `WorkingDirectory`, `EnvironmentFile` and the path in `ExecStart` to match your server (the username and the folder where you cloned the project). Then:
+
+```bash
+sudo cp paycheck-sentinel.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now paycheck-sentinel
+```
+
+**5. Check that it works**
+
+```bash
+sudo systemctl status paycheck-sentinel
+journalctl -u paycheck-sentinel -f
+curl -sI http://localhost:5000/ | head -3
+```
+
+The service starts automatically on every boot and restarts if it crashes (`Restart=on-failure`). To apply an update:
+
+```bash
+cd ~/bailiff-sentinel
+git pull
+venv/bin/pip install -r requirements.txt
+sudo systemctl restart paycheck-sentinel
+```
+
+## Access
+
+- The service listens on `127.0.0.1:5000` only. To reach it from your network, put a reverse proxy (for example Nginx) in front of it, or change `--bind` in the unit file to `0.0.0.0:5000` if you trust the network.
+- From outside: through a VPN into your network, then via the reverse proxy.
+
+## Project structure
+
+```
+bailiff-sentinel/
+  app.py                     - Flask routes (upload, analysis, export, history)
+  paycheck_sentinel/
+    xmlparse.py              - automatic row/column detection in XML files
+    checks.py                - the detection logic
+    db.py                    - PostgreSQL schema and data access
+  templates/index.html       - main page
+  static/style.css           - dark ops-console theme
+  static/app.js              - frontend logic (fetch calls to the API)
+  Dockerfile
+  docker-compose.yml         - app + PostgreSQL + Redis
+  .env.example               - template for the required configuration
+  paycheck-sentinel.service  - systemd unit file
+  requirements.txt
+```
+
+## Security notes
+
+- The application has **no login or authentication**. Anyone who can reach the port can open it. Run it only on a private network or behind a VPN, and do not expose it directly to the internet. If you need an extra layer, put a reverse proxy with HTTP basic auth in front of it.
+- Use a strong random `FLASK_SECRET_KEY` and `DB_PASSWORD`, and keep `.env` readable only by the service user (`chmod 600 .env`).
+- Real XML statements and databases contain financial data and must never be committed to the repository (see `.gitignore`).
+
+---
+
+Developed by Zeljko Tripcevski
