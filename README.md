@@ -118,3 +118,38 @@ ostaje samo lokalno na serveru.
 ---
 Developed by Zeljko Tripcevski
 
+
+## Quick start (Docker)
+
+Requirements: Docker with the Compose plugin.
+
+```bash
+git clone https://github.com/zeljkotr/bailiff-sentinel.git
+cd bailiff-sentinel
+
+cp .env.example .env
+# edit .env: set DB_PASSWORD and FLASK_SECRET_KEY (openssl rand -hex 32)
+
+docker compose up -d --build
+```
+
+Open http://localhost:5000. The database schema is created automatically on first start.
+
+To stop: `docker compose down` (data is kept in the `pgdata` volume).
+To wipe all data: `docker compose down -v`.
+
+## Configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FLASK_SECRET_KEY` | yes | - | Secret used to sign session cookies |
+| `DB_PASSWORD` | yes | - | PostgreSQL password |
+| `DB_HOST` | no | `localhost` | PostgreSQL host (`db` in Compose) |
+| `DB_PORT` | no | `5432` | PostgreSQL port |
+| `DB_NAME` | no | `bailiff` | Database name |
+| `DB_USER` | no | `bailiff` | Database user |
+| `REDIS_HOST` | no | `localhost` | Redis host (`redis` in Compose) |
+| `REDIS_PORT` | no | `6379` | Redis port |
+| `APP_PORT` | no | `5000` | Host port used by Compose |
+
+The app fails at startup if a required variable is missing.
