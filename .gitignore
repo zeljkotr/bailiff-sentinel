@@ -6,3 +6,4 @@ instance/*.db
 !sample*.xml
 *.csv
 .DS_Store
+.env

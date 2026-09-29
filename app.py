@@ -14,6 +14,8 @@ import os
 import time
 
 from flask import Flask, jsonify, render_template, request, send_file, g, Response
+from flask_session import Session
+import redis
 
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
@@ -24,12 +26,31 @@ from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
-DB_PATH = os.path.join(INSTANCE_DIR, "paycheck_sentinel.db")
 
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit
+
+# --- Server-side sesije preko Redis-a ---
+# Potrebno zbog load balancera (Nginx ispred vise Gunicorn/Docker instanci) -
+# bez ovoga bi sesija bila zakljucana za konkretni kontejner koji ju je napravio,
+# pa bi korisnik gubio state kad ga Nginx prebaci na drugu instancu.
+# REDIS_HOST se cita iz env varijable da bi isti image radio i lokalno
+# (docker run bez --network, host='localhost') i na custom Docker mrezi
+# (host='redis-test' preko Docker DNS-a).
+app.config["SESSION_TYPE"] = "redis"
+app.config["SESSION_REDIS"] = redis.StrictRedis(
+    host=os.environ.get("REDIS_HOST", "localhost"),
+    port=int(os.environ.get("REDIS_PORT", 6379)),
+    db=0,
+)
+app.config["SESSION_KEY_PREFIX"] = "bailiff:"
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_USE_SIGNER"] = True  # potpisuje session cookie ID, dodatna sigurnost
+app.secret_key = os.environ["FLASK_SECRET_KEY"]  # fails at startup if not set
+
+Session(app)
 
 # --- Prometheus aplikacione (biznis) metrike ---
 # Ovo su metrike o TOME STA APLIKACIJA RADI, ne o serveru/infrastrukturi
@@ -61,7 +82,7 @@ analysis_processing_seconds = Histogram(
 
 def get_conn():
     if "db_conn" not in g:
-        g.db_conn = db.get_db(DB_PATH)
+        g.db_conn = db.get_db()
     return g.db_conn
 
 
@@ -560,7 +581,7 @@ def _compute_stats(txns):
 
 
 with app.app_context():
-    db.init_db(DB_PATH)
+    db.init_db()
 
 
 if __name__ == "__main__":
