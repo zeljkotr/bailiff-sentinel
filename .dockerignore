@@ -1,6 +1,18 @@
+# Secrets and local config must never end up inside the image
 .env
-.git
+.env.*
+
+# Git and CI metadata
+.git/
+.gitignore
+.github/
+.vscode/
+
+# Local environment and state; the image builds its own clean environment
 venv/
 instance/
 __pycache__/
 *.pyc
+
+# Real bank statements must never be copied into an image
+*.xml

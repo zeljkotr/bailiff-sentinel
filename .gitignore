@@ -1,9 +1,25 @@
+# Python
 venv/
+.venv/
 __pycache__/
 *.pyc
-instance/*.db
-*.xml
-!sample*.xml
-*.csv
-.DS_Store
+
+# Secrets and local configuration
 .env
+
+# Local databases
+instance/
+*.db
+*.sqlite3
+
+# Real bank statements must never be committed.
+# Only the fake examples in sample/ are allowed.
+*.xml
+!sample/*.xml
+*.csv
+*.pdf
+
+# OS and editor files
+.DS_Store
+.vscode/
+.idea/

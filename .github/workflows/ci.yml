@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile app.py paycheck_sentinel/*.py
+
+  docker-smoke-test:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create .env with throwaway CI-only values
+        run: |
+          cat > .env <<EOF
+          FLASK_SECRET_KEY=ci-only-secret-key-not-for-production
+          DB_PASSWORD=ci-only-password
+          EOF
+      - name: Start the full stack and wait until every service is healthy
+        run: docker compose up -d --build --wait --wait-timeout 120
+      - name: App answers on the published port
+        run: curl -sf http://127.0.0.1:5000/ > /dev/null
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

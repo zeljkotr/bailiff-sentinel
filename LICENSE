@@ -1,0 +1,69 @@
+Paycheck Sentinel (bailiff-sentinel) - Trial License
+
+Copyright (c) 2026 Zeljko Tripcevski. All rights reserved.
+
+1. DEFINITIONS
+"Software" means the source code, documentation, container definitions and
+all other files in this repository, and any copies or derivative works of them.
+"Author" means Zeljko Tripcevski.
+"Trial Period" means the 15 days that start on the first day you run the
+Software.
+
+2. TRIAL GRANT
+The Author grants you a limited, non-exclusive, non-transferable, revocable
+license to download and run the Software on your own computer for the sole
+purpose of evaluating it during the Trial Period.
+
+3. AFTER THE TRIAL PERIOD
+When the Trial Period ends you must stop using the Software and delete all
+copies of it, unless you have obtained a commercial license from the Author.
+Continued use of the Software requires a separate written commercial license.
+
+4. RESTRICTIONS
+Unless the Author gives you written permission, you may not:
+(a) use the Software after the Trial Period, or use it for production or
+    commercial purposes during the Trial Period;
+(b) remove, disable, bypass or tamper with any license check, trial timer or
+    copyright notice in the Software, or reset the Trial Period in any way;
+(c) copy, distribute, sublicense, sell, rent, lend or host the Software for
+    third parties, including offering it as a hosted or online service;
+(d) modify the Software or create derivative works, except for the
+    configuration the Software provides for;
+(e) use the Software or any part of it to build a competing product.
+
+5. VIEWING AND FORKING
+You may read the source code. As allowed by GitHub's Terms of Service, you may
+fork this repository on GitHub. Viewing or forking does not grant you any
+right other than those in this license.
+
+6. YOUR DATA
+You are solely responsible for the data you process with the Software,
+including compliance with data protection law. Only use data you are
+authorized to process.
+
+7. OWNERSHIP
+The Software is licensed, not sold. The Author retains all rights, title and
+interest in it. Third-party components included in the Software remain under
+their own licenses.
+
+8. NO WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+9. LIMITATION OF LIABILITY
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+10. TERMINATION
+This license ends automatically if you breach any of its terms. On
+termination you must stop using the Software and delete all copies of it.
+
+11. GOVERNING LAW
+This license is governed by the laws of the Republic of Serbia.
+
+12. COMMERCIAL LICENSING
+To obtain a commercial license, contact the Author through
+https://github.com/zeljkotr.
