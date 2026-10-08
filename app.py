@@ -32,13 +32,12 @@ os.makedirs(INSTANCE_DIR, exist_ok=True)
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit
 
-# --- Server-side sesije preko Redis-a ---
-# Potrebno zbog load balancera (Nginx ispred vise Gunicorn/Docker instanci) -
-# bez ovoga bi sesija bila zakljucana za konkretni kontejner koji ju je napravio,
-# pa bi korisnik gubio state kad ga Nginx prebaci na drugu instancu.
-# REDIS_HOST se cita iz env varijable da bi isti image radio i lokalno
-# (docker run bez --network, host='localhost') i na custom Docker mrezi
-# (host='redis-test' preko Docker DNS-a).
+# --- Server-side sessions in Redis ---
+# Needed for load balancing (Nginx in front of several Gunicorn/Docker
+# instances): without it the session would be tied to the one container that
+# created it, and the user would lose state when Nginx switches instances.
+# REDIS_HOST is read from an environment variable so the same image works
+# locally (host='localhost') and on a Docker network (host='redis' via Docker DNS).
 app.config["SESSION_TYPE"] = "redis"
 app.config["SESSION_REDIS"] = redis.StrictRedis(
     host=os.environ.get("REDIS_HOST", "localhost"),
@@ -47,12 +46,12 @@ app.config["SESSION_REDIS"] = redis.StrictRedis(
 )
 app.config["SESSION_KEY_PREFIX"] = "bailiff:"
 app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_USE_SIGNER"] = True  # potpisuje session cookie ID, dodatna sigurnost
+app.config["SESSION_USE_SIGNER"] = True  # signs the session cookie ID for extra protection
 app.secret_key = os.environ["FLASK_SECRET_KEY"]  # fails at startup if not set
 
 Session(app)
 
-# --- Prometheus aplikacione (biznis) metrike ---
+# --- Prometheus application (business) metrics ---
 # Ovo su metrike o TOME STA APLIKACIJA RADI, ne o serveru/infrastrukturi
 # (za infrastrukturu - CPU/RAM/disk - koristimo node_exporter, odvojeno).
 

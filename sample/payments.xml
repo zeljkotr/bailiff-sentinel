@@ -1,0 +1,88 @@
+<?xml version="1.0"?>
+<!-- Fictional sample data. Not real payments. -->
+<payments>
+  <payment>
+    <orderid>ORD-1001</orderid>
+    <debtor>Example Debtor A</debtor>
+    <paid>4500.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-02</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1002</orderid>
+    <debtor>Example Debtor B</debtor>
+    <paid>5000.00</paid>
+    <returned>5000.00</returned>
+    <paiddate>2026-03-03</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1003</orderid>
+    <debtor>Example Debtor C</debtor>
+    <paid>8000.00</paid>
+    <returned>2500.00</returned>
+    <paiddate>2026-03-04</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1004</orderid>
+    <debtor>Example Debtor D</debtor>
+    <paid>4200.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-09</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1005</orderid>
+    <debtor>Example Debtor E</debtor>
+    <paid>3900.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-10</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1005</orderid>
+    <debtor>Example Debtor F</debtor>
+    <paid>6100.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-11</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1006</orderid>
+    <debtor>Example Debtor D</debtor>
+    <paid>4200.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-09</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1007</orderid>
+    <debtor>Example Debtor G</debtor>
+    <paid>5500.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-12</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1008</orderid>
+    <debtor>Example Debtor H</debtor>
+    <paid>4800.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-13</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1009</orderid>
+    <debtor>Example Debtor I</debtor>
+    <paid>7300.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-16</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1010</orderid>
+    <debtor>Example Debtor J</debtor>
+    <paid>250000.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-17</paiddate>
+  </payment>
+  <payment>
+    <orderid>ORD-1011</orderid>
+    <debtor>Example Debtor K</debtor>
+    <paid>3600.00</paid>
+    <returned>0.00</returned>
+    <paiddate>2026-03-18</paiddate>
+  </payment>
+</payments>

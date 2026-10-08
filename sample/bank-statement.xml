@@ -1,0 +1,132 @@
+<?xml version="1.0"?>
+<!-- Fictional sample data. Not a real bank statement. -->
+<ibankstatement>
+  <stmtrslist>
+    <stmtrs>
+      <acctid>SAMPLE-ACC-OWN</acctid>
+      <banktranlist>
+        <stmttrn>
+          <trnid>TRN-0001</trnid>
+          <benefit>credit</benefit>
+          <dtposted>2026-03-01T09:00:00</dtposted>
+          <trnamt>85000.00</trnamt>
+          <refnumber>REF-3001</refnumber>
+          <name>Example Employer Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-1001</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeeaccountinfo>
+          <memo>Monthly service fee</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0002</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-02T10:15:00</dtposted>
+          <trnamt>12500.00</trnamt>
+          <refnumber>REF-2001</refnumber>
+          <name>Example Supplier Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-0002</acctid></payeeaccountinfo>
+          <memo>Invoice 2026-014</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0003</trnid>
+          <benefit>credit</benefit>
+          <dtposted>2026-03-04T11:40:00</dtposted>
+          <trnamt>12500.00</trnamt>
+          <refnumber>REF-2001</refnumber>
+          <name>Example Supplier Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-0002</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeeaccountinfo>
+          <memo>Return of payment</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0004</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-05T08:30:00</dtposted>
+          <trnamt>640.50</trnamt>
+          <refnumber>REF-3002</refnumber>
+          <name>Example Utility Co</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-1002</acctid></payeeaccountinfo>
+          <memo>Electricity March</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0005</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-10T14:05:00</dtposted>
+          <trnamt>3200.00</trnamt>
+          <refnumber>REF-2002</refnumber>
+          <name>Example Courier Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-0003</acctid></payeeaccountinfo>
+          <memo>Delivery services</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0006</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-12T16:45:00</dtposted>
+          <trnamt>1875.00</trnamt>
+          <refnumber>REF-3003</refnumber>
+          <name>Example Office Supply</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-1003</acctid></payeeaccountinfo>
+          <memo>Printer paper</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0007</trnid>
+          <benefit>credit</benefit>
+          <dtposted>2026-03-15T09:20:00</dtposted>
+          <trnamt>3200.00</trnamt>
+          <refnumber>REF-2999</refnumber>
+          <name>Example Courier Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-0003</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeeaccountinfo>
+          <memo>Refund</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0008</trnid>
+          <benefit>credit</benefit>
+          <dtposted>2026-03-18T10:10:00</dtposted>
+          <trnamt>22000.00</trnamt>
+          <refnumber>REF-3004</refnumber>
+          <name>Example Client A</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-1004</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeeaccountinfo>
+          <memo>Invoice 2026-009 payment</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0009</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-20T13:00:00</dtposted>
+          <trnamt>9900.00</trnamt>
+          <refnumber>REF-3005</refnumber>
+          <name>Example Landlord</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-1005</acctid></payeeaccountinfo>
+          <memo>Office rent</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0010</trnid>
+          <benefit>credit</benefit>
+          <dtposted>2026-03-25T09:55:00</dtposted>
+          <trnamt>4300.00</trnamt>
+          <refnumber>REF-3006</refnumber>
+          <name>Example Client B</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-1006</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeeaccountinfo>
+          <memo>Invoice 2026-011 payment</memo>
+        </stmttrn>
+        <stmttrn>
+          <trnid>TRN-0011</trnid>
+          <benefit>debit</benefit>
+          <dtposted>2026-03-27T15:30:00</dtposted>
+          <trnamt>15000.00</trnamt>
+          <refnumber>REF-3007</refnumber>
+          <name>Example Partner Ltd</name>
+          <payeraccountinfo><acctid>SAMPLE-ACC-OWN</acctid></payeraccountinfo>
+          <payeeaccountinfo><acctid>SAMPLE-ACC-0002</acctid></payeeaccountinfo>
+          <memo>Transfer to partner</memo>
+        </stmttrn>
+      </banktranlist>
+    </stmtrs>
+  </stmtrslist>
+</ibankstatement>
