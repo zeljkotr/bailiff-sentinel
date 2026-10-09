@@ -35,7 +35,7 @@ import redis
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from paycheck_sentinel import db
-from paycheck_sentinel.licensing import get_license_status, initialize_trial_state
+from paycheck_sentinel.licensing import get_license_status, initialize_trial_state, verify_license, save_license_token
 from paycheck_sentinel.checks import analyze, analyze_circular_refund, analyze_transfer
 from paycheck_sentinel.pdf_export import build_pdf_report
 from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
@@ -103,7 +103,7 @@ Session(app)
 @app.before_request
 def enforce_application_license():
     # Keep Prometheus monitoring available even when application use is blocked.
-    if request.endpoint == "metrics":
+    if request.endpoint in {"metrics", "index", "activate_license", "static"}:
         return None
 
     status = get_license_status()
@@ -193,6 +193,27 @@ def inject_versioned_static():
 @app.route("/")
 def index():
     return render_template("index.html", license_status=get_license_status())
+
+
+@app.route("/activate-license", methods=["POST"])
+def activate_license():
+    data = request.get_json(silent=True) or request.form
+    token = str(data.get("license_key", "")).strip()
+    if not token:
+        return jsonify({"success": False, "message": "Unesi licencni kljuc."}), 400
+
+    result = verify_license(token)
+    if not result.get("valid"):
+        return jsonify({
+            "success": False,
+            "message": "Licenca nije validna: " + result.get("reason", "provera nije uspela"),
+        }), 400
+
+    save_license_token(token)
+    return jsonify({
+        "success": True,
+        "message": "Licenca je uspesno aktivirana za: " + result["licensee"],
+    })
 
 
 @app.route("/metrics")

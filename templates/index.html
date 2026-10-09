@@ -7,6 +7,14 @@
 <link rel="stylesheet" href="{{ versioned_static('style.css') }}">
 </head>
 <body>
+<div style="margin:12px auto;padding:14px 18px;max-width:1100px;border:1px solid #64748b;border-radius:8px;background:#f8fafc;color:#1e293b;text-align:center;">
+  <form id="licenseActivationForm" style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">
+    <label for="licenseKeyInput" style="font-weight:600;">Licencni kljuc</label>
+    <input id="licenseKeyInput" name="license_key" type="text" autocomplete="off" required placeholder="Nalepi licencni kljuc" style="width:min(480px,90%);padding:9px;border:1px solid #94a3b8;border-radius:5px;">
+    <button type="submit" style="padding:9px 16px;cursor:pointer;">Aktiviraj</button>
+  </form>
+  <div id="licenseActivationMessage" role="status" style="margin-top:8px;"></div>
+</div>
 {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}
 <div style="margin:12px auto;padding:12px 18px;max-width:1100px;border:1px solid #d97706;border-radius:8px;background:#fff7ed;color:#9a3412;font-weight:600;text-align:center;">
   Probni period — preostalo {{ license_status.get('days_remaining', 0) }} dana
@@ -453,6 +461,32 @@
   </div>
 </div>
 
+<script>
+document.getElementById("licenseActivationForm").addEventListener("submit", async function (event) {
+  event.preventDefault();
+  const message = document.getElementById("licenseActivationMessage");
+  const license_key = document.getElementById("licenseKeyInput").value.trim();
+  message.textContent = "Proveravam licencu...";
+  try {
+    const response = await fetch("/activate-license", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({license_key})
+    });
+    const result = await response.json();
+    message.textContent = result.message || "Aktivacija nije uspela.";
+    if (response.ok && result.success) {
+      message.style.color = "#166534";
+      setTimeout(() => window.location.reload(), 1000);
+    } else {
+      message.style.color = "#b91c1c";
+    }
+  } catch (error) {
+    message.textContent = "Greska pri povezivanju. Pokusaj ponovo.";
+    message.style.color = "#b91c1c";
+  }
+});
+</script>
 <script src="{{ versioned_static('app.js') }}"></script>
 <footer style="text-align:center; color:var(--muted); font-size:11px; margin-top:24px; padding-top:14px; border-top:1px solid var(--border);">
   Developed by Zeljko Tripcevski

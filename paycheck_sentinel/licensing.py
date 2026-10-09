@@ -87,6 +87,14 @@ def initialize_trial_state():
     with db.get_db() as conn:
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS app_license_key (
+                singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
+                license_token TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS app_license_state (
                 singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
                 trial_started_at DATE NOT NULL
@@ -110,10 +118,36 @@ def initialize_trial_state():
     return row["trial_started_at"]
 
 
+def save_license_token(token):
+    """Persist a verified commercial license token."""
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_license_key (
+                singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
+                license_token TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_license_key (singleton_id, license_token)
+            VALUES (1, %s)
+            ON CONFLICT (singleton_id)
+            DO UPDATE SET license_token = EXCLUDED.license_token
+            """,
+            (token,),
+        )
+
+
 def get_license_status(today=None):
-    """Check the configured commercial license or the persistent trial."""
+    """Check the saved/configured commercial license or the persistent trial."""
     today = today or date.today()
-    token = os.environ.get(LICENSE_ENV, "").strip()
+    with db.get_db() as conn:
+        row = conn.execute(
+            "SELECT license_token FROM app_license_key WHERE singleton_id = 1"
+        ).fetchone()
+    token = (row["license_token"] if row else "") or os.environ.get(LICENSE_ENV, "").strip()
 
     if token:
         result = verify_license(token, today=today)
