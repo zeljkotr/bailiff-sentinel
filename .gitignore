@@ -23,3 +23,10 @@ instance/
 .DS_Store
 .vscode/
 .idea/
+
+# Never commit private keys
+*.pem
+.env.*
+!.env.example
+private_key.pem
+issued_licenses.log
