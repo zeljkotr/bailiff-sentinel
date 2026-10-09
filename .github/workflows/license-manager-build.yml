@@ -41,16 +41,17 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path "dist\LicenseManagerPackage" | Out-Null
           Copy-Item "dist\BailiffSentinelLicenseManager.exe" "dist\LicenseManagerPackage\"
-          @"
-Bailiff Sentinel License Manager
-
-1. Keep your private_key.pem file secret.
-2. Copy your existing private_key.pem beside BailiffSentinelLicenseManager.exe.
-3. Run the executable to issue licenses.
-4. Keep issued_licenses.log backed up and private.
-
-Never upload private_key.pem to GitHub or include it in a customer application.
-"@ | Set-Content "dist\LicenseManagerPackage\README.txt"
+          @(
+            "Bailiff Sentinel License Manager"
+            ""
+            "Keep private_key.pem secret and outside GitHub."
+            "Copy your existing private_key.pem beside the executable."
+            "Keep issued_licenses.log backed up and private."
+            "Never include private_key.pem in a customer application."
+          ) | Set-Content "dist\LicenseManagerPackage\README.txt"
+          if (!(Test-Path "dist\LicenseManagerPackage\README.txt")) {
+            throw "README was not created"
+          }
 
       - name: Upload License Manager
         uses: actions/upload-artifact@v4
