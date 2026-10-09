@@ -192,7 +192,7 @@ def inject_versioned_static():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", license_status=get_license_status())
 
 
 @app.route("/metrics")
