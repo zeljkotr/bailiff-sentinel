@@ -1,0 +1,61 @@
+name: License Manager Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/license_manager_gui.py"
+      - ".github/workflows/license-manager-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-license-manager:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+          python -m pip install cryptography pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+
+      - name: Build License Manager
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name BailiffSentinelLicenseManager tools/license_manager_gui.py
+          if ($LASTEXITCODE -ne 0) { throw "License Manager build failed" }
+          if (!(Test-Path "dist\BailiffSentinelLicenseManager.exe")) {
+            throw "License Manager executable was not created"
+          }
+          New-Item -ItemType Directory -Force -Path "dist\LicenseManagerPackage" | Out-Null
+          Copy-Item "dist\BailiffSentinelLicenseManager.exe" "dist\LicenseManagerPackage\"
+          @"
+Bailiff Sentinel License Manager
+
+1. Keep your private_key.pem file secret.
+2. Copy your existing private_key.pem beside BailiffSentinelLicenseManager.exe.
+3. Run the executable to issue licenses.
+4. Keep issued_licenses.log backed up and private.
+
+Never upload private_key.pem to GitHub or include it in a customer application.
+"@ | Set-Content "dist\LicenseManagerPackage\README.txt"
+
+      - name: Upload License Manager
+        uses: actions/upload-artifact@v4
+        with:
+          name: BailiffSentinel-License-Manager-Windows
+          path: dist/LicenseManagerPackage/
+          if-no-files-found: error
+          retention-days: 14
