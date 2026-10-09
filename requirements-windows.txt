@@ -1,0 +1,8 @@
+Flask==3.0.3
+prometheus_client==0.26.0
+reportlab==4.2.5
+Flask-Session==0.8.0
+redis==5.2.1
+psycopg[binary]>=3.2,<4
+cryptography>=44,<52
+pyinstaller>=6.10,<7

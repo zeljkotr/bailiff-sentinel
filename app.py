@@ -11,7 +11,22 @@ Developed by Zeljko Tripcevski
 import csv
 import io
 import os
+import sys
 import time
+
+# A packaged Windows executable always runs in local SQLite mode.
+# Set this before importing the database module.
+if getattr(sys, "frozen", False):
+    os.environ["PAYCHECK_SENTINEL_DB"] = "sqlite"
+    _local_data_dir = os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+        "BailiffSentinel",
+    )
+    os.makedirs(_local_data_dir, exist_ok=True)
+    os.environ.setdefault(
+        "PAYCHECK_SENTINEL_DB_PATH",
+        os.path.join(_local_data_dir, "bailiff.sqlite3"),
+    )
 
 from flask import Flask, jsonify, render_template, request, send_file, g, Response
 from flask_session import Session
@@ -26,29 +41,61 @@ from paycheck_sentinel.pdf_export import build_pdf_report
 from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
+
+# Store writable data outside the installed application on Windows.
+LOCAL_MODE = os.environ.get("PAYCHECK_SENTINEL_DB", "").lower() in {
+    "sqlite", "sqlite3", "local"
+}
+
+if LOCAL_MODE and os.name == "nt":
+    LOCAL_DATA_DIR = os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+        "BailiffSentinel",
+    )
+    INSTANCE_DIR = LOCAL_DATA_DIR
+    os.environ.setdefault(
+        "PAYCHECK_SENTINEL_DB_PATH",
+        os.path.join(LOCAL_DATA_DIR, "bailiff.sqlite3"),
+    )
+else:
+    INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit
 
-# --- Server-side sessions in Redis ---
-# Needed for load balancing (Nginx in front of several Gunicorn/Docker
-# instances): without it the session would be tied to the one container that
-# created it, and the user would lose state when Nginx switches instances.
-# REDIS_HOST is read from an environment variable so the same image works
-# locally (host='localhost') and on a Docker network (host='redis' via Docker DNS).
-app.config["SESSION_TYPE"] = "redis"
-app.config["SESSION_REDIS"] = redis.StrictRedis(
-    host=os.environ.get("REDIS_HOST", "localhost"),
-    port=int(os.environ.get("REDIS_PORT", 6379)),
-    db=0,
-)
+# LOCAL_MODE is determined above, before the database module is imported.
+
 app.config["SESSION_KEY_PREFIX"] = "bailiff:"
 app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_USE_SIGNER"] = True  # signs the session cookie ID for extra protection
-app.secret_key = os.environ["FLASK_SECRET_KEY"]  # fails at startup if not set
+app.config["SESSION_USE_SIGNER"] = True
+
+if LOCAL_MODE:
+    SESSION_DIR = os.path.join(INSTANCE_DIR, "sessions")
+    os.makedirs(SESSION_DIR, exist_ok=True)
+    app.config["SESSION_TYPE"] = "filesystem"
+    app.config["SESSION_FILE_DIR"] = SESSION_DIR
+
+    # Persist the local secret so sessions remain valid after app restarts.
+    secret_path = os.path.join(INSTANCE_DIR, "flask_secret_key")
+    if not os.path.exists(secret_path):
+        import secrets
+        try:
+            with open(secret_path, "x", encoding="utf-8") as secret_file:
+                secret_file.write(secrets.token_hex(32))
+        except FileExistsError:
+            pass
+    with open(secret_path, "r", encoding="utf-8") as secret_file:
+        app.secret_key = secret_file.read().strip()
+else:
+    app.config["SESSION_TYPE"] = "redis"
+    app.config["SESSION_REDIS"] = redis.StrictRedis(
+        host=os.environ.get("REDIS_HOST", "localhost"),
+        port=int(os.environ.get("REDIS_PORT", 6379)),
+        db=0,
+    )
+    app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
 Session(app)
 

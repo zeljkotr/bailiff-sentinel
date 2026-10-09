@@ -1,0 +1,57 @@
+name: Windows Desktop Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "app.py"
+      - "paycheck_sentinel/**"
+      - "templates/**"
+      - "static/**"
+      - "requirements-windows.txt"
+      - "bailiff_sentinel_windows.spec"
+      - "build_windows.ps1"
+      - ".github/workflows/windows-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+          python -m pip install -r requirements-windows.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+
+      - name: Build Windows application
+        shell: pwsh
+        env:
+          PAYCHECK_SENTINEL_DB: sqlite
+        run: |
+          python -m PyInstaller --noconfirm --clean bailiff_sentinel_windows.spec
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+          if (!(Test-Path "dist\BailiffSentinel\BailiffSentinel.exe")) {
+            throw "Executable was not created"
+          }
+
+      - name: Upload Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: BailiffSentinel-Windows
+          path: dist/BailiffSentinel/
+          if-no-files-found: error
+          retention-days: 14

@@ -144,6 +144,9 @@ def get_license_status(today=None):
         }
 
     started = row["trial_started_at"]
+    if isinstance(started, str):
+        started = date.fromisoformat(started)
+
     elapsed = (today - started).days
 
     if elapsed < 0:
