@@ -20,6 +20,7 @@ import redis
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from paycheck_sentinel import db
+from paycheck_sentinel.licensing import get_license_status, initialize_trial_state
 from paycheck_sentinel.checks import analyze, analyze_circular_refund, analyze_transfer
 from paycheck_sentinel.pdf_export import build_pdf_report
 from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
@@ -50,6 +51,21 @@ app.config["SESSION_USE_SIGNER"] = True  # signs the session cookie ID for extra
 app.secret_key = os.environ["FLASK_SECRET_KEY"]  # fails at startup if not set
 
 Session(app)
+
+
+@app.before_request
+def enforce_application_license():
+    # Keep Prometheus monitoring available even when application use is blocked.
+    if request.endpoint == "metrics":
+        return None
+
+    status = get_license_status()
+    if not status.get("active"):
+        return jsonify({
+            "error": "Application license is not active",
+            "license": status,
+        }), 403
+    return None
 
 # --- Prometheus application (business) metrics ---
 # Ovo su metrike o TOME STA APLIKACIJA RADI, ne o serveru/infrastrukturi
@@ -581,6 +597,7 @@ def _compute_stats(txns):
 
 with app.app_context():
     db.init_db()
+    initialize_trial_state()
 
 
 if __name__ == "__main__":

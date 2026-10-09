@@ -5,3 +5,5 @@ reportlab==4.2.5
 Flask-Session==0.8.0
 redis==5.2.1
 psycopg[binary]>=3.2,<4
+
+cryptography>=44,<52
