@@ -39,7 +39,7 @@
         {% endif %}
       </div>
 
-{% if not license_status.get("active") %}
+{% if not (license_status.get("active") and license_status.get("type") != "trial") %}
       <form id="licenseActivationForm" style="margin-bottom:18px">
         <label for="licenseKeyInput" style="display:block;font-size:12px;font-weight:700;margin-bottom:7px">Aktivacioni ključ</label>
         <textarea id="licenseKeyInput" rows="3" autocomplete="off" spellcheck="false"
