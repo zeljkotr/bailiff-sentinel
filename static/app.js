@@ -51,14 +51,14 @@ setStep(1);
   const dontShow = document.getElementById("dontShowAgain");
 
   let skip = false;
-  try { skip = localStorage.getItem("paycheckSentinelSkipWelcome") === "1"; } catch (e) { /* ignore */ }
+  try { skip = localStorage.getItem("paycheckSentinelSkipWelcomeLicensePopup") === "1"; } catch (e) { /* ignore */ }
 
   if (!skip) modal.classList.remove("hidden");
 
   function closeModal() {
     modal.classList.add("hidden");
     if (dontShow.checked) {
-      try { localStorage.setItem("paycheckSentinelSkipWelcome", "1"); } catch (e) { /* ignore */ }
+      try { localStorage.setItem("paycheckSentinelSkipWelcomeLicensePopup", "1"); } catch (e) { /* ignore */ }
     }
   }
   closeBtn.addEventListener("click", closeModal);
