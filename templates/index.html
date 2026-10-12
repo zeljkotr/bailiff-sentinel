@@ -8,7 +8,8 @@
 </head>
 <body>
 
-<div class="modal-overlay hidden" id="welcomeModal">
+<div class="modal-overlay hidden" id="welcomeModal"
+     data-license-active="{{ '1' if license_status.get('active') else '0' }}">
   <div class="modal-box">
     <button class="modal-close" id="modalCloseX" aria-label="Zatvori">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
@@ -23,6 +24,33 @@
       </div>
     </div>
     <div class="modal-body">
+      <div style="padding:12px 14px;margin-bottom:16px;border:1px solid var(--border);border-radius:8px;background:var(--panel2)">
+        {% if license_status.get('active') and license_status.get('type') == 'commercial' %}
+          <b style="color:var(--teal)">Komercijalna licenca je aktivna</b>
+          <div style="font-size:12px;margin-top:5px">Korisnik: {{ license_status.get('licensee', '—') }}</div>
+          <div style="font-size:12px;margin-top:3px">Važi do: {{ license_status.get('expires') or 'Neograničeno' }}</div>
+        {% elif license_status.get('active') and license_status.get('type') == 'trial' %}
+          <b style="color:var(--amber-bright)">Probni period je aktivan</b>
+          <div style="font-size:12px;margin-top:5px">Preostalo dana: {{ license_status.get('days_remaining', 0) }} od 15</div>
+          <div style="font-size:12px;margin-top:3px">Početak: {{ license_status.get('trial_started_at', '—') }}</div>
+        {% else %}
+          <b style="color:var(--coral)">Potrebna je aktivacija</b>
+          <div style="font-size:12px;margin-top:5px">Probni period je istekao ili licenca nije važeća. Unesi važeći aktivacioni ključ da nastaviš.</div>
+        {% endif %}
+      </div>
+
+{% if not license_status.get("active") %}
+      <form id="licenseActivationForm" style="margin-bottom:18px">
+        <label for="licenseKeyInput" style="display:block;font-size:12px;font-weight:700;margin-bottom:7px">Aktivacioni ključ</label>
+        <textarea id="licenseKeyInput" rows="3" autocomplete="off" spellcheck="false"
+          placeholder="Nalepi PS1 aktivacioni ključ ovde"
+          style="width:100%;box-sizing:border-box;resize:vertical;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text)"></textarea>
+        <div id="licenseActivationMessage" role="status" aria-live="polite"
+          style="font-size:12px;margin-top:7px;white-space:pre-wrap"></div>
+        <button type="submit" id="licenseActivateBtn" style="margin-top:9px">Aktiviraj licencu</button>
+      </form>
+{% endif %}
+
       <div class="modal-steps">
         <div class="modal-step"><span class="modal-step-n">1</span><div><b>Učitaj XML</b><span>Prevuci jedan ili više iBank izvoda, ili ceo folder odjednom.</span></div></div>
         <div class="modal-step"><span class="modal-step-n">2</span><div><b>Podesi analizu</b><span>Odaberi mod (standardni ili bankovni izvod), mapiraj kolone i uključi provere koje su ti potrebne.</span></div></div>

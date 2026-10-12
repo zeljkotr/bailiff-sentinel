@@ -20,7 +20,11 @@ import redis
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from paycheck_sentinel import db
-from paycheck_sentinel.licensing import get_license_status, initialize_trial_state
+from paycheck_sentinel.licensing import (
+    get_license_status,
+    initialize_trial_state,
+    save_license_token,
+)
 from paycheck_sentinel.checks import analyze, analyze_circular_refund, analyze_transfer
 from paycheck_sentinel.pdf_export import build_pdf_report
 from paycheck_sentinel.xmlparse import XMLParseError, parse_xml_text
@@ -55,8 +59,12 @@ Session(app)
 
 @app.before_request
 def enforce_application_license():
-    # Keep Prometheus monitoring available even when application use is blocked.
-    if request.endpoint == "metrics":
+    # Allow the UI, static assets, monitoring and license recovery while blocked.
+    public_endpoints = {
+        "index", "metrics", "static",
+        "license_status", "activate_license",
+    }
+    if request.endpoint in public_endpoints:
         return None
 
     status = get_license_status()
@@ -145,7 +153,31 @@ def inject_versioned_static():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", license_status=get_license_status())
+
+
+@app.route("/api/license/status", methods=["GET"])
+def license_status():
+    return jsonify(get_license_status())
+
+
+@app.route("/api/license/activate", methods=["POST"])
+def activate_license():
+    body = request.get_json(silent=True) or {}
+    token = body.get("token", "")
+    if not isinstance(token, str) or not token.strip():
+        return jsonify({"ok": False, "error": "Unesi aktivacioni ključ."}), 400
+
+    try:
+        result = save_license_token(token.strip())
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    return jsonify({
+        "ok": True,
+        "licensee": result["licensee"],
+        "expires": result["expires"],
+    })
 
 
 @app.route("/metrics")

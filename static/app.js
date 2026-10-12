@@ -50,12 +50,14 @@ setStep(1);
   const closeX = document.getElementById("modalCloseX");
   const dontShow = document.getElementById("dontShowAgain");
 
+  const licenseActive = modal.dataset.licenseActive === "1";
   let skip = false;
   try { skip = localStorage.getItem("paycheckSentinelSkipWelcome") === "1"; } catch (e) { /* ignore */ }
 
-  if (!skip) modal.classList.remove("hidden");
+  if (!licenseActive || !skip) modal.classList.remove("hidden");
 
   function closeModal() {
+    if (!licenseActive) return;
     modal.classList.add("hidden");
     if (dontShow.checked) {
       try { localStorage.setItem("paycheckSentinelSkipWelcome", "1"); } catch (e) { /* ignore */ }
@@ -63,7 +65,55 @@ setStep(1);
   }
   closeBtn.addEventListener("click", closeModal);
   closeX.addEventListener("click", closeModal);
-  modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+  modal.addEventListener("click", e => {
+    if (e.target === modal && licenseActive) closeModal();
+  });
+})();
+
+// ---- license activation ----
+(function initLicenseActivation() {
+  const form = document.getElementById("licenseActivationForm");
+  if (!form) return;
+
+  const input = document.getElementById("licenseKeyInput");
+  const message = document.getElementById("licenseActivationMessage");
+  const button = document.getElementById("licenseActivateBtn");
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const token = input.value.trim();
+    if (!token) {
+      message.textContent = "Unesi aktivacioni ključ.";
+      message.style.color = "var(--coral)";
+      return;
+    }
+
+    button.disabled = true;
+    message.textContent = "Proveravam licencu...";
+    message.style.color = "var(--muted)";
+
+    try {
+      const response = await fetch("/api/license/activate", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token})
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || "Aktivacija nije uspela.");
+      }
+
+      message.textContent = "Licenca je aktivirana. Osvežavam aplikaciju...";
+      message.style.color = "var(--teal)";
+      window.location.reload();
+    } catch (error) {
+      message.textContent = error.message || "Greška pri aktivaciji licence.";
+      message.style.color = "var(--coral)";
+    } finally {
+      button.disabled = false;
+    }
+  });
 })();
 
 const dropzone = document.getElementById("dropzone");

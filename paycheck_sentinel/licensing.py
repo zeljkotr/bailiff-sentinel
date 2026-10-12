@@ -82,9 +82,38 @@ def verify_license(token, public_key_b64=PUBLIC_KEY_B64, today=None):
         return {"valid": False, "reason": "Invalid license"}
 
 
+def save_license_token(token):
+    """Verify and persist a commercial license token in PostgreSQL."""
+    result = verify_license(token)
+    if not result["valid"]:
+        raise ValueError(result["reason"] or "Invalid license")
+
+    with db.get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_license_key (
+                singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
+                license_token TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO app_license_key (singleton_id, license_token)
+            VALUES (1, %s)
+            ON CONFLICT (singleton_id)
+            DO UPDATE SET license_token = EXCLUDED.license_token
+        """, (token.strip(),))
+
+    return result
+
+
 def initialize_trial_state():
     """Create one persistent trial-start date shared by all workers/instances."""
     with db.get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_license_key (
+                singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
+                license_token TEXT NOT NULL
+            )
+        """)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS app_license_state (
@@ -113,7 +142,13 @@ def initialize_trial_state():
 def get_license_status(today=None):
     """Check the configured commercial license or the persistent trial."""
     today = today or date.today()
-    token = os.environ.get(LICENSE_ENV, "").strip()
+    with db.get_db() as conn:
+        row = conn.execute(
+            "SELECT license_token FROM app_license_key WHERE singleton_id = 1"
+        ).fetchone()
+
+    token = ((row["license_token"] if row else "") or
+             os.environ.get(LICENSE_ENV, "")).strip()
 
     if token:
         result = verify_license(token, today=today)
