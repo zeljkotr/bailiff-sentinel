@@ -147,7 +147,7 @@ Group=${APP_GROUP}
 WorkingDirectory=${APP_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${VENV_DIR}/bin/gunicorn --workers 3 --bind 127.0.0.1:${APP_PORT} --timeout 120 app:app
+ExecStart=${VENV_DIR}/bin/gunicorn --workers 3 --bind 0.0.0.0:${APP_PORT} --timeout 120 app:app
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -177,4 +177,5 @@ printf 'Direktorijum: %s\n' "$APP_DIR"
 printf 'Servis: %s\n' "$SERVICE_NAME"
 printf 'Status: sudo systemctl status %s\n' "$SERVICE_NAME"
 printf 'Logovi: sudo journalctl -u %s -n 100 --no-pager\n' "$SERVICE_NAME"
-printf 'Adresa: http://127.0.0.1:%s/\n' "$APP_PORT"
+printf 'Lokalna adresa: http://127.0.0.1:%s/\n' "$APP_PORT"
+printf 'Mrezna adresa: http://%s:%s/\n' "$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')" "$APP_PORT"
