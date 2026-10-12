@@ -1,3 +1,5 @@
+from PyInstaller.utils.hooks import collect_submodules
+
 # PyInstaller build configuration for Windows.
 a = Analysis(
     ["app.py"],
@@ -13,7 +15,7 @@ a = Analysis(
         "psycopg.pq",
         "flask_session.filesystem",
         "cachelib",
-    ],
+    ] + collect_submodules("waitress"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

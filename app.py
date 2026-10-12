@@ -669,4 +669,42 @@ with app.app_context():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    if getattr(sys, "frozen", False) and os.name == "nt":
+        import shutil
+        import subprocess
+        import threading
+        import webbrowser
+        from waitress import serve
+
+        app_url = "http://127.0.0.1:5000"
+
+        def open_desktop_window():
+            candidates = [
+                shutil.which("msedge"),
+                os.path.join(
+                    os.environ.get("PROGRAMFILES(X86)", ""),
+                    "Microsoft", "Edge", "Application", "msedge.exe",
+                ),
+                os.path.join(
+                    os.environ.get("PROGRAMFILES", ""),
+                    "Microsoft", "Edge", "Application", "msedge.exe",
+                ),
+                os.path.join(
+                    os.environ.get("LOCALAPPDATA", ""),
+                    "Microsoft", "Edge", "Application", "msedge.exe",
+                ),
+            ]
+            edge = next(
+                (candidate for candidate in candidates
+                 if candidate and os.path.isfile(candidate)),
+                None,
+            )
+            if edge:
+                subprocess.Popen([edge, f"--app={app_url}"])
+            else:
+                webbrowser.open(app_url)
+
+        threading.Timer(1.5, open_desktop_window).start()
+        serve(app, host="127.0.0.1", port=5000, threads=8)
+    else:
+        app.run(host="0.0.0.0", port=5000)
