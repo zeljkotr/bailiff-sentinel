@@ -700,7 +700,7 @@ if __name__ == "__main__":
                 None,
             )
             if edge:
-                subprocess.Popen([edge, f"--app={app_url}"])
+                subprocess.Popen([edge, f"--app={app_url}", "--start-fullscreen"])
             else:
                 webbrowser.open(app_url)
 
