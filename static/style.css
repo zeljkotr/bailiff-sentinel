@@ -608,3 +608,39 @@ tr.flagged-warn td:first-child{border-left:3px solid var(--amber);}
   display:flex; flex-direction:column; align-items:center; gap:8px;
 }
 .empty-state svg{width:26px; height:26px; opacity:.35;}
+
+/* License panel: enforce the application's dark theme. */
+.modal-body > div:first-child {
+  background: var(--panel2) !important;
+  color: var(--text) !important;
+}
+
+.modal-body > div:first-child label {
+  color: var(--text) !important;
+}
+
+.modal-body > div:first-child input[type="text"] {
+  background: var(--panel) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  color-scheme: dark;
+  -webkit-text-fill-color: var(--text) !important;
+}
+
+.modal-body > div:first-child input[type="text"]:-webkit-autofill,
+.modal-body > div:first-child input[type="text"]:-webkit-autofill:hover,
+.modal-body > div:first-child input[type="text"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  caret-color: var(--text);
+}
+
+.modal-body > div:first-child button[type="submit"] {
+  background: var(--amber) !important;
+  color: #1a1400 !important;
+}
+
+.modal-body > div:first-child button[type="submit"]:hover {
+  background: var(--amber-bright) !important;
+}

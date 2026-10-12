@@ -22,21 +22,21 @@
       </div>
     </div>
     <div class="modal-body">
-      <div style="margin:0 0 18px;padding:14px;border:1px solid {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}#d97706{% elif license_status and license_status.get('active') %}#16a34a{% else %}#64748b{% endif %};border-radius:8px;background:#f8fafc;color:#1e293b;">
+      <div style="margin:0 0 18px;padding:14px;border:1px solid {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}var(--amber){% elif license_status and license_status.get('active') %}var(--teal){% else %}var(--border){% endif %};border-radius:var(--radius);background:var(--panel2);color:var(--text);">
         {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}
-          <div style="font-weight:700;color:#9a3412;margin-bottom:6px;">Probni period — preostalo {{ license_status.get('days_remaining', 0) }} dana</div>
+          <div style="font-weight:700;color:var(--amber-bright);margin-bottom:6px;">Probni period — preostalo {{ license_status.get('days_remaining', 0) }} dana</div>
           <div style="font-size:13px;margin-bottom:12px;">Aktiviraj licencu ako želiš da nastaviš da koristiš aplikaciju nakon probnog perioda.</div>
         {% elif license_status and license_status.get('active') %}
-          <div style="font-weight:700;color:#166534;margin-bottom:6px;">Komercijalna licenca je aktivna</div>
+          <div style="font-weight:700;color:var(--teal);margin-bottom:6px;">Komercijalna licenca je aktivna</div>
           <div style="font-size:13px;margin-bottom:12px;">Licenca: {{ license_status.get('licensee', 'aktivna') }}</div>
         {% else %}
-          <div style="font-weight:700;color:#b91c1c;margin-bottom:6px;">Licenca nije aktivna</div>
+          <div style="font-weight:700;color:var(--coral);margin-bottom:6px;">Licenca nije aktivna</div>
           <div style="font-size:13px;margin-bottom:12px;">Unesi licencni ključ da aktiviraš aplikaciju.</div>
         {% endif %}
         {% if not (license_status and license_status.get('active') and license_status.get('type') == 'commercial') %}
         <form id="licenseActivationForm" style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">
           <label for="licenseKeyInput" style="font-weight:600;">Licencni ključ</label>
-          <input id="licenseKeyInput" name="license_key" type="text" autocomplete="off" required placeholder="Nalepi licencni ključ" style="width:min(360px,90%);padding:9px;border:1px solid #94a3b8;border-radius:5px;">
+          <input id="licenseKeyInput" name="license_key" type="text" autocomplete="off" required placeholder="Nalepi licencni ključ" style="width:min(360px,90%);padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--panel);color:var(--text);">
           <button type="submit" style="padding:9px 16px;cursor:pointer;">Aktiviraj licencu</button>
         </form>
         <div id="licenseActivationMessage" role="status" style="margin-top:8px;text-align:center;"></div>
