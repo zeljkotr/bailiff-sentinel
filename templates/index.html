@@ -7,22 +7,6 @@
 <link rel="stylesheet" href="{{ versioned_static('style.css') }}">
 </head>
 <body>
-{% if not (license_status and license_status.get("active")) %}
-<div style="margin:12px auto;padding:14px 18px;max-width:1100px;border:1px solid #64748b;border-radius:8px;background:#f8fafc;color:#1e293b;text-align:center;">
-  <form id="licenseActivationForm" style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">
-    <label for="licenseKeyInput" style="font-weight:600;">Licencni kljuc</label>
-    <input id="licenseKeyInput" name="license_key" type="text" autocomplete="off" required placeholder="Nalepi licencni kljuc" style="width:min(480px,90%);padding:9px;border:1px solid #94a3b8;border-radius:5px;">
-    <button type="submit" style="padding:9px 16px;cursor:pointer;">Aktiviraj</button>
-  </form>
-  <div id="licenseActivationMessage" role="status" style="margin-top:8px;"></div>
-</div>
-{% endif %}
-{% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}
-<div style="margin:12px auto;padding:12px 18px;max-width:1100px;border:1px solid #d97706;border-radius:8px;background:#fff7ed;color:#9a3412;font-weight:600;text-align:center;">
-  Probni period — preostalo {{ license_status.get('days_remaining', 0) }} dana
-</div>
-{% endif %}
-
 <div class="modal-overlay hidden" id="welcomeModal">
   <div class="modal-box">
     <button class="modal-close" id="modalCloseX" aria-label="Zatvori">
@@ -38,6 +22,26 @@
       </div>
     </div>
     <div class="modal-body">
+      <div style="margin:0 0 18px;padding:14px;border:1px solid {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}#d97706{% elif license_status and license_status.get('active') %}#16a34a{% else %}#64748b{% endif %};border-radius:8px;background:#f8fafc;color:#1e293b;">
+        {% if license_status and license_status.get('active') and license_status.get('type') == 'trial' %}
+          <div style="font-weight:700;color:#9a3412;margin-bottom:6px;">Probni period — preostalo {{ license_status.get('days_remaining', 0) }} dana</div>
+          <div style="font-size:13px;margin-bottom:12px;">Aktiviraj licencu ako želiš da nastaviš da koristiš aplikaciju nakon probnog perioda.</div>
+        {% elif license_status and license_status.get('active') %}
+          <div style="font-weight:700;color:#166534;margin-bottom:6px;">Komercijalna licenca je aktivna</div>
+          <div style="font-size:13px;margin-bottom:12px;">Licenca: {{ license_status.get('licensee', 'aktivna') }}</div>
+        {% else %}
+          <div style="font-weight:700;color:#b91c1c;margin-bottom:6px;">Licenca nije aktivna</div>
+          <div style="font-size:13px;margin-bottom:12px;">Unesi licencni ključ da aktiviraš aplikaciju.</div>
+        {% endif %}
+        {% if not (license_status and license_status.get('active') and license_status.get('type') == 'commercial') %}
+        <form id="licenseActivationForm" style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">
+          <label for="licenseKeyInput" style="font-weight:600;">Licencni ključ</label>
+          <input id="licenseKeyInput" name="license_key" type="text" autocomplete="off" required placeholder="Nalepi licencni ključ" style="width:min(360px,90%);padding:9px;border:1px solid #94a3b8;border-radius:5px;">
+          <button type="submit" style="padding:9px 16px;cursor:pointer;">Aktiviraj licencu</button>
+        </form>
+        <div id="licenseActivationMessage" role="status" style="margin-top:8px;text-align:center;"></div>
+        {% endif %}
+      </div>
       <div class="modal-steps">
         <div class="modal-step"><span class="modal-step-n">1</span><div><b>Učitaj XML</b><span>Prevuci jedan ili više iBank izvoda, ili ceo folder odjednom.</span></div></div>
         <div class="modal-step"><span class="modal-step-n">2</span><div><b>Podesi analizu</b><span>Odaberi mod (standardni ili bankovni izvod), mapiraj kolone i uključi provere koje su ti potrebne.</span></div></div>
