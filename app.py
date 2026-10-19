@@ -598,7 +598,7 @@ def api_export_filtered_pdf(batch_id):
     if requested_columns:
         # dozvoli samo kolone koje stvarno postoje u podacima (ili nase interno
         # __own_account/__source_file polje), da izbegnemo prazne kolone u PDF-u
-        allowed = set(columns) | {"__own_account", "__source_file"}
+        allowed = set(columns) | {"__own_account", "__source_file", "__reference"}
         display_columns_override = [c for c in requested_columns if c in allowed]
 
     pdf_buf = build_pdf_report(batch, columns, txns, stats, True, mode, "filtered", display_columns_override=display_columns_override, column_labels_override=requested_labels)
