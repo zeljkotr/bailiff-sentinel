@@ -83,7 +83,7 @@ jobs:
           TARGET=/home/ljuba/bailiff-sentinel-linux-stable
           ARCHIVE="/tmp/bailiff-sentinel-${GITHUB_SHA}.tar.gz"
           STAGE="/tmp/bailiff-sentinel-stage-${GITHUB_SHA}"
-          BACKUP="/home/ljuba/bailiff-sentinel-backup-${GITHUB_SHA}"
+          BACKUP="/home/ljuba/bailiff-sentinel-backup-${GITHUB_SHA}-$(date +%Y%m%d-%H%M%S)-$$"
           ROLLBACK_NEEDED=0
 
           test -d "$TARGET"
