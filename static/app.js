@@ -336,6 +336,43 @@ function guessTransferColumns() {
   return { acctBCol, dateCol, amountCol };
 }
 
+// Reference number ("poziv na broj") detection.
+// Matching is done on the LAST segment of the flattened column name, so it works
+// whether the parser produced "payeerefnumber" or e.g. "payeeinfo.payeerefnumber".
+// Pairs are tried in order; the first pair with a non-empty number wins for a row.
+// To support another bank's naming, add a new entry to this list.
+// NOTE: the same list is mirrored in paycheck_sentinel/pdf_export.py (REFERENCE_PAIRS).
+const REFERENCE_PAIRS = [
+  { model: "payeerefmodel", number: "payeerefnumber" }, // beneficiary reference (credit side)
+  { model: "refmodel", number: "refnumber" },           // payer reference (debit side)
+  { model: null, number: "pozivnabroj" },
+  { model: null, number: "referencenumber" },
+];
+
+function findColumnByLastSegment(cols, target) {
+  if (!target) return null;
+  return cols.find(c => normalize(String(c).split(".").pop()) === target) || null;
+}
+
+function guessReferenceColumns() {
+  return REFERENCE_PAIRS
+    .map(p => ({
+      model: findColumnByLastSegment(currentColumns, p.model),
+      number: findColumnByLastSegment(currentColumns, p.number),
+    }))
+    .filter(p => p.number);
+}
+
+function getReferenceValue(raw, refPairs) {
+  for (const p of refPairs) {
+    const number = String(raw[p.number] ?? "").trim();
+    if (!number) continue;
+    const model = p.model ? String(raw[p.model] ?? "").trim() : "";
+    return model ? `${model} ${number}` : number;
+  }
+  return "";
+}
+
 function parseFlexibleDate(str) {
   if (!str) return null;
   const s = String(str).trim();
@@ -372,6 +409,8 @@ function populateTransferSearchAccountA() {
 
 function renderTransferSearch() {
   const { acctBCol, dateCol, amountCol } = guessTransferColumns();
+  const refPairs = guessReferenceColumns();
+  const hasRef = refPairs.length > 0;
 
   const acctA = document.getElementById("transferAcctA").value;
   const acctB = document.getElementById("transferAcctB").value.trim().toLowerCase();
@@ -395,9 +434,17 @@ function renderTransferSearch() {
 
   transferMatchedRows = matched;
 
+  // Header is built dynamically so the reference column only appears when the
+  // loaded XML actually contains a reference number field.
+  const headers = ["Datum", "Račun A", "Račun B", "Iznos"];
+  if (hasRef) headers.push("Poziv na broj");
+  headers.push("Fajl");
+  document.getElementById("transferTheadRow").innerHTML =
+    headers.map(h => `<th>${escapeHtml(h)}</th>`).join("");
+
   const tbody = document.getElementById("transferTbody");
   if (!matched.length) {
-    tbody.innerHTML = `<tr><td colspan="5">
+    tbody.innerHTML = `<tr><td colspan="${headers.length}">
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         Nijedan red ne odgovara ovoj pretrazi.
@@ -409,6 +456,7 @@ function renderTransferSearch() {
       <td>${escapeHtml(r.raw.__own_account ?? "")}</td>
       <td>${escapeHtml(acctBCol ? (r.raw[acctBCol] ?? "") : "")}</td>
       <td>${escapeHtml(amountCol ? (r.raw[amountCol] ?? "") : "")}</td>
+      ${hasRef ? `<td>${escapeHtml(getReferenceValue(r.raw, refPairs))}</td>` : ""}
       <td>${escapeHtml(r.raw.__source_file ?? "")}</td>
     </tr>`).join("");
   }
@@ -430,11 +478,14 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
   }
   const rowIndices = transferMatchedRows.map(r => r.idx);
   const { acctBCol, dateCol, amountCol } = guessTransferColumns();
-  const displayColumns = ["__source_file", "__own_account", dateCol, acctBCol, amountCol].filter(Boolean);
+  const hasRef = guessReferenceColumns().length > 0;
+  // "__reference" is a virtual column: pdf_export.py computes its value from the raw row.
+  const displayColumns = ["__source_file", "__own_account", dateCol, acctBCol, amountCol, hasRef ? "__reference" : null].filter(Boolean);
   const columnLabels = {};
   if (dateCol) columnLabels[dateCol] = "Datum";
   if (acctBCol) columnLabels[acctBCol] = "Račun B";
   if (amountCol) columnLabels[amountCol] = "Iznos";
+  if (hasRef) columnLabels["__reference"] = "Poziv na broj";
   try {
     const resp = await fetch(`/api/batches/${currentBatchId}/export_filtered.pdf`, {
       method: "POST",

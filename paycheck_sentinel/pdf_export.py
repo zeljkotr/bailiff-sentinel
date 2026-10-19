@@ -10,6 +10,7 @@ Developed by Zeljko Tripcevski
 
 import io
 import os
+import re
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -25,6 +26,22 @@ FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 _FONTS_REGISTERED = False
 
+# Virtual column name: not a real XML column, its value is computed per row
+# from the reference number fields (see _find_reference_pairs/_reference_value).
+REFERENCE_COLUMN = "__reference"
+
+# Reference number ("poziv na broj") detection. Matching is done on the last
+# segment of the flattened column name, so "payeerefnumber" and
+# "payeeinfo.payeerefnumber" both match. Pairs are tried in order; the first
+# pair with a non-empty number wins for a row.
+# NOTE: keep in sync with REFERENCE_PAIRS in static/app.js.
+REFERENCE_PAIRS = [
+    {"model": "payeerefmodel", "number": "payeerefnumber"},  # beneficiary reference (credit side)
+    {"model": "refmodel", "number": "refnumber"},            # payer reference (debit side)
+    {"model": None, "number": "pozivnabroj"},
+    {"model": None, "number": "referencenumber"},
+]
+
 
 def _ensure_fonts():
     global _FONTS_REGISTERED
@@ -33,6 +50,48 @@ def _ensure_fonts():
     pdfmetrics.registerFont(TTFont("DejaVuSans", os.path.join(FONTS_DIR, "DejaVuSans.ttf")))
     pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", os.path.join(FONTS_DIR, "DejaVuSans-Bold.ttf")))
     _FONTS_REGISTERED = True
+
+
+def _normalize(s):
+    """Lowercase, strip Serbian diacritics and everything except a-z0-9 (mirrors normalize() in app.js)."""
+    s = (s or "").lower()
+    for src, dst in (("č", "c"), ("ć", "c"), ("š", "s"), ("ž", "z"), ("đ", "dj")):
+        s = s.replace(src, dst)
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def _find_column_by_last_segment(columns, target):
+    if not target:
+        return None
+    for c in columns:
+        if _normalize(str(c).split(".")[-1]) == target:
+            return c
+    return None
+
+
+def _find_reference_pairs(columns):
+    """Resolve REFERENCE_PAIRS to real column names present in this batch."""
+    pairs = []
+    for p in REFERENCE_PAIRS:
+        number_col = _find_column_by_last_segment(columns, p["number"])
+        if not number_col:
+            continue
+        pairs.append({
+            "model": _find_column_by_last_segment(columns, p["model"]),
+            "number": number_col,
+        })
+    return pairs
+
+
+def _reference_value(raw, ref_pairs):
+    """Return 'model number' (or just 'number') from the first pair that has a number, else ''."""
+    for p in ref_pairs:
+        number = str(raw.get(p["number"]) or "").strip()
+        if not number:
+            continue
+        model = str(raw.get(p["model"]) or "").strip() if p["model"] else ""
+        return f"{model} {number}" if model else number
+    return ""
 
 
 def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kind="flagged", display_columns_override=None, column_labels_override=None):
@@ -50,7 +109,9 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     display_columns_override: list[str] | None — ako je zadato, koristi se
            tacno ovaj (uzi, unapred odabrani) skup kolona umesto automatskog
            pogadjanja po modu. Koristi se npr. za fokusiranu pretragu
-           transfera gde nema klasicnog mapiranja kolona.
+           transfera gde nema klasicnog mapiranja kolona. Moze da sadrzi i
+           virtuelnu kolonu "__reference" (poziv na broj) cija se vrednost
+           racuna iz sirovog reda.
     column_labels_override: dict[str, str] | None — citljivi naziv za pojedine
            kolone (npr. {"dtposted": "Datum"}) umesto sirovog XML naziva taga.
     """
@@ -58,6 +119,11 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
 
     display_columns = display_columns_override if display_columns_override else _pick_display_columns(batch, columns, mode)
     column_labels_override = column_labels_override or {}
+
+    # The virtual reference column is only kept if this batch actually has reference fields.
+    ref_pairs = _find_reference_pairs(columns)
+    if not ref_pairs:
+        display_columns = [c for c in display_columns if c != REFERENCE_COLUMN]
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -147,7 +213,13 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     row_colors = []
     for r in rows:
         raw = r.get("raw", {})
-        row_cells = [Paragraph(_truncate(raw.get(c, "")), cell_style) for c in display_columns]
+        row_cells = []
+        for c in display_columns:
+            if c == REFERENCE_COLUMN:
+                value = _reference_value(raw, ref_pairs)
+            else:
+                value = raw.get(c, "")
+            row_cells.append(Paragraph(_truncate(value), cell_style))
         flags = r.get("flags", [])
         flags_text = "+".join(f["label"] for f in flags) if flags else "OK"
         row_cells.append(Paragraph(flags_text, cell_style))
@@ -227,6 +299,8 @@ def _column_label(col):
         return "Fajl"
     if col == "__own_account":
         return "Račun A"
+    if col == REFERENCE_COLUMN:
+        return "Poziv na broj"
     return col.split(".")[-1]
 
 
