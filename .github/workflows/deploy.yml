@@ -1,7 +1,16 @@
 name: Deploy
+
 on:
   push:
-    branches: [main]
+    branches: [linux-stable]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bailiff-sentinel-production
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -10,58 +19,144 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python -m py_compile app.py paycheck_sentinel/*.py
-  deploy-staging:
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Python modules
+        run: python -m py_compile app.py paycheck_sentinel/*.py
+
+  deploy-kalca:
     needs: test
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
-          tags: tag:ci
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-      - name: Deploy to vmdev (Docker)
-        run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
-            "cd ~/bailiff-sentinel && \
-             git pull && \
-             docker build -t bailiff-sentinel:latest . && \
-             docker stop bailiff-sentinel || true && \
-             docker rm bailiff-sentinel || true && \
-             docker run -d --name bailiff-sentinel --restart=on-failure -p 5000:5000 bailiff-sentinel:latest"
-      - name: Health check
-        run: |
-          sleep 3
-          curl -v http://${{ secrets.STAGING_HOST }}:5000/ || (echo "Health check failed" && exit 1)
-  deploy-production:
-    needs: deploy-staging
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Create and validate source archive
+        run: |
+          set -eu
+          tar \
+            --exclude='./.git' \
+            --exclude='./.env' \
+            --exclude='./venv' \
+            --exclude='./instance' \
+            --exclude='*.bak' \
+            -czf "$RUNNER_TEMP/bailiff-sentinel.tar.gz" .
+          tar -tzf "$RUNNER_TEMP/bailiff-sentinel.tar.gz" >/dev/null
+          test -s "$RUNNER_TEMP/bailiff-sentinel.tar.gz"
+
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
           tags: tag:ci
-      - name: Set up SSH key
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          set -eu
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-      - name: Deploy to kalca
+
+      - name: Copy source archive to Kalca
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key ljuba@${{ secrets.DEPLOY_HOST }} \
-            "cd ~/bailiff-sentinel && git pull && venv/bin/pip install -r requirements.txt && sudo systemctl restart paycheck-sentinel"
-      - name: Health check
+          set -eu
+          test -n "$DEPLOY_HOST"
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          scp -o StrictHostKeyChecking=yes -i ~/.ssh/deploy_key \
+            "$RUNNER_TEMP/bailiff-sentinel.tar.gz" \
+            "ljuba@${DEPLOY_HOST}:/tmp/bailiff-sentinel-${GITHUB_SHA}.tar.gz"
+
+      - name: Deploy with code backup and rollback
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
+          set -eu
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/deploy_key \
+            "ljuba@${DEPLOY_HOST}" "GITHUB_SHA=${GITHUB_SHA} bash -s" <<'REMOTE'
+          set -eu
+          TARGET=/home/ljuba/bailiff-sentinel-linux-stable
+          ARCHIVE="/tmp/bailiff-sentinel-${GITHUB_SHA}.tar.gz"
+          STAGE="/tmp/bailiff-sentinel-stage-${GITHUB_SHA}"
+          BACKUP="/home/ljuba/bailiff-sentinel-backup-${GITHUB_SHA}"
+          ROLLBACK_NEEDED=0
+
+          test -d "$TARGET"
+          test -f "$TARGET/.env"
+          test -x "$TARGET/venv/bin/pip"
+          test -s "$ARCHIVE"
+          mkdir -m 700 "$STAGE"
+          tar -tzf "$ARCHIVE" >/dev/null
+          tar -xzf "$ARCHIVE" -C "$STAGE"
+          test -f "$STAGE/app.py"
+          test -f "$STAGE/requirements.txt"
+          "$TARGET/venv/bin/python" -m py_compile "$STAGE/app.py" "$STAGE"/paycheck_sentinel/*.py
+
+          mkdir -m 700 "$BACKUP"
+          cp -a "$TARGET/app.py" "$BACKUP/"
+          cp -a "$TARGET/requirements.txt" "$BACKUP/"
+          cp -a "$TARGET/paycheck_sentinel" "$BACKUP/"
+          for item in templates static; do
+            if test -e "$TARGET/$item"; then cp -a "$TARGET/$item" "$BACKUP/"; fi
+          done
+
+          rollback() {
+            rc=$?
+            if test "$ROLLBACK_NEEDED" -eq 1; then
+              echo "Deployment failed; restoring previous application code" >&2
+              cp -a "$BACKUP/app.py" "$TARGET/"
+              cp -a "$BACKUP/requirements.txt" "$TARGET/"
+              rm -rf "$TARGET/paycheck_sentinel"
+              cp -a "$BACKUP/paycheck_sentinel" "$TARGET/"
+              for item in templates static; do
+                if test -e "$BACKUP/$item"; then
+                  rm -rf "$TARGET/$item"
+                  cp -a "$BACKUP/$item" "$TARGET/"
+                fi
+              done
+              sudo systemctl restart paycheck-sentinel || true
+            fi
+            rm -rf "$STAGE"
+            rm -f "$ARCHIVE"
+            exit "$rc"
+          }
+          trap rollback EXIT
+
+          ROLLBACK_NEEDED=1
+          for item in app.py requirements.txt paycheck_sentinel templates static; do
+            if test -e "$STAGE/$item"; then
+              if test -d "$STAGE/$item"; then
+                rm -rf "$TARGET/$item"
+                cp -a "$STAGE/$item" "$TARGET/$item"
+              else
+                install -m 0644 "$STAGE/$item" "$TARGET/$item"
+              fi
+            fi
+          done
+
+          "$TARGET/venv/bin/pip" install -r "$TARGET/requirements.txt"
+          sudo systemctl restart paycheck-sentinel
           sleep 3
-          curl -sf http://${{ secrets.DEPLOY_HOST }}:5000/ || (echo "Health check failed" && exit 1)
+          sudo systemctl is-active --quiet paycheck-sentinel
+          curl --fail --silent --show-error http://127.0.0.1:5000/ --max-time 15 >/dev/null
+
+          ROLLBACK_NEEDED=0
+          trap - EXIT
+          rm -rf "$STAGE"
+          rm -f "$ARCHIVE"
+          echo "Deployment and local HTTP health check passed. Code backup: $BACKUP"
+          REMOTE
+
+      - name: Verify externally reachable app
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          sleep 2
+          curl --fail --silent --show-error \
+            "http://${DEPLOY_HOST}:5000/" \
+            --max-time 15 >/dev/null
