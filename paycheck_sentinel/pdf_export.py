@@ -122,8 +122,6 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
 
     # The virtual reference column is only kept if this batch actually has reference fields.
     ref_pairs = _find_reference_pairs(columns)
-    if not ref_pairs:
-        display_columns = [c for c in display_columns if c != REFERENCE_COLUMN]
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(

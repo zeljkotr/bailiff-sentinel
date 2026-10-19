@@ -480,7 +480,7 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
   const { acctBCol, dateCol, amountCol } = guessTransferColumns();
   const hasRef = guessReferenceColumns().length > 0;
   // "__reference" is a virtual column: pdf_export.py computes its value from the raw row.
-  const displayColumns = ["__source_file", "__own_account", dateCol, acctBCol, amountCol, hasRef ? "__reference" : null].filter(Boolean);
+  const displayColumns = [dateCol, "__own_account", acctBCol, amountCol, "__reference", "__source_file"].filter(Boolean);
   const columnLabels = {};
   if (dateCol) columnLabels[dateCol] = "Datum";
   if (acctBCol) columnLabels[acctBCol] = "Račun B";
