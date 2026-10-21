@@ -574,6 +574,11 @@ def api_export_filtered_pdf(batch_id):
     requested_columns = body.get("display_columns")
     requested_labels = body.get("column_labels") or {}
 
+    # "Transfer između računa" search: the client sends report_kind="transfer" plus the
+    # search parameters, so the PDF shows exactly what the on-screen table shows.
+    is_transfer_export = body.get("report_kind") == "transfer"
+    transfer_meta = body.get("transfer_meta") if is_transfer_export else None
+
     all_txns = db.get_transactions(conn, batch_id)
     columns = _json_or_empty(batch["columns_json"])
     mode = batch.get("mode") or "generic"
@@ -598,11 +603,20 @@ def api_export_filtered_pdf(batch_id):
     if requested_columns:
         # dozvoli samo kolone koje stvarno postoje u podacima (ili nase interno
         # __own_account/__source_file polje), da izbegnemo prazne kolone u PDF-u
-        allowed = set(columns) | {"__own_account", "__source_file", "__reference"}
+        allowed = set(columns) | {
+            "__own_account", "__source_file", "__reference",
+            "__transfer_from", "__transfer_to", "__transfer_date",
+        }
         display_columns_override = [c for c in requested_columns if c in allowed]
 
-    pdf_buf = build_pdf_report(batch, columns, txns, stats, True, mode, "filtered", display_columns_override=display_columns_override, column_labels_override=requested_labels)
-    filename = f"paycheck-sentinel-batch{batch_id}-filtrirano.pdf"
+    report_kind = "transfer" if is_transfer_export else "filtered"
+    pdf_buf = build_pdf_report(
+        batch, columns, txns, stats, True, mode, report_kind,
+        display_columns_override=display_columns_override,
+        column_labels_override=requested_labels,
+        transfer_meta=transfer_meta,
+    )
+    filename = f"paycheck-sentinel-batch{batch_id}-{'transfer' if is_transfer_export else 'filtrirano'}.pdf"
     return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 

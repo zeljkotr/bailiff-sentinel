@@ -319,21 +319,104 @@ function populateOwnAccountFilter() {
 // ---- Transfer između računa: fokusirana pretraga (Račun A, Račun B, period, PDF izvoz) ----
 let transferMatchedRows = [];
 
+// Which date field the transfer search uses, in order of preference.
+// iBank payments are posted late in the evening (dtposted, e.g. 09.11. 22:33) and
+// become available on the next day (dtavail, 10.11.), which is the date shown on the
+// statement. To switch back to the posting date, swap the order: ["dtposted", "dtavail"].
+const TRANSFER_DATE_PREFERENCE = ["dtavail", "dtposted"];
+
+function lastColumnSegment(col) {
+  return normalize(String(col).split(".").pop());
+}
+
+function findTransferColumn(parentName, leafName) {
+  return currentColumns.find(c => {
+    const parts = String(c).split(".");
+    return normalize(parts[parts.length - 1]) === leafName &&
+      normalize(parts.slice(0, -1).join(".")).endsWith(parentName);
+  }) || null;
+}
+
 function guessTransferColumns() {
   const cols = currentColumns;
-  const acctBCol = cols.find(c => normalize(c).includes("payeeaccountinfo")) ||
-                   cols.find(c => normalize(c).includes("primalac")) ||
-                   cols.find(c => normalize(c).includes("poverilac")) ||
-                   cols.find(c => normalize(c).includes("racun")) ||
-                   cols.find(c => normalize(c).includes("acct")) ||
-                   cols.find(c => normalize(c).includes("iban"));
-  const dateCol = cols.find(c => normalize(c).includes("dtposted")) ||
-                  cols.find(c => normalize(c).includes("datum")) ||
-                  cols.find(c => normalize(c).includes("date"));
+  const payerAcctCol = findTransferColumn("payeraccountinfo", "acctid");
+  const payeeAcctCol = findTransferColumn("payeeaccountinfo", "acctid");
+  const benefitCol = cols.find(c => lastColumnSegment(c) === "benefit") || null;
+
+  let dateCol = null;
+  for (const name of TRANSFER_DATE_PREFERENCE) {
+    dateCol = cols.find(c => lastColumnSegment(c) === name) || null;
+    if (dateCol) break;
+  }
+  dateCol = dateCol ||
+            cols.find(c => normalize(c).includes("dtposted")) ||
+            cols.find(c => normalize(c).includes("datum")) ||
+            cols.find(c => normalize(c).includes("date")) || null;
+  // Fallback used per row when the preferred date field is empty.
+  const fallbackDateCol = cols.find(c => lastColumnSegment(c) === "dtposted") || null;
+
   const amountCol = cols.find(c => normalize(c).includes("trnamt")) ||
-                     cols.find(c => normalize(c).includes("iznos")) ||
-                     cols.find(c => normalize(c).includes("amount"));
-  return { acctBCol, dateCol, amountCol };
+                    cols.find(c => normalize(c).includes("iznos")) ||
+                    cols.find(c => normalize(c).includes("amount"));
+  return { payerAcctCol, payeeAcctCol, benefitCol, dateCol, fallbackDateCol, amountCol };
+}
+
+function getTransferDateValue(raw, cols) {
+  const primary = cols.dateCol ? String(raw[cols.dateCol] ?? "").trim() : "";
+  if (primary) return primary;
+  return cols.fallbackDateCol ? String(raw[cols.fallbackDateCol] ?? "").trim() : "";
+}
+
+// Canonical form of a Serbian bank account number (bank - middle part - control digits).
+// Ignores separators, spaces, case and the number of leading zeros in the middle part, so
+// "340-13004080-23", "340-0000013004080-23", "340000001300408023" and "3401300408023"
+// all normalize to "340-13004080-23". Anything that is not a domestic account number
+// (e.g. an IBAN) falls back to its lowercase alphanumeric characters.
+function normalizeAccount(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+  if (!s) return "";
+
+  const parts = s.split(/[^a-z0-9]+/).filter(Boolean);
+  if (!parts.length) return "";
+
+  const allDigits = parts.every(p => /^\d+$/.test(p));
+  if (allDigits) {
+    let bank, middle, control;
+    if (parts.length === 3) {
+      [bank, middle, control] = parts;
+    } else {
+      const digits = parts.join("");
+      if (digits.length < 6) return digits;
+      bank = digits.slice(0, 3);
+      control = digits.slice(-2);
+      middle = digits.slice(3, -2);
+    }
+    const middleTrimmed = middle.replace(/^0+/, "") || "0";
+    return `${bank}-${middleTrimmed}-${control.padStart(2, "0")}`;
+  }
+
+  return parts.join("");
+}
+
+// Direction of a payment as (from -> to), regardless of which side the statement belongs to.
+// iBank statements only contain the counterparty account (payeeaccountinfo/acctid);
+// the statement owner is the account in stmtrs/acctid (row.__own_account) and
+// the direction comes from "benefit":
+//   debit  = money left the statement owner and went to the counterparty (owner -> counterparty)
+//   credit = money came in from the counterparty to the statement owner  (counterparty -> owner)
+function getTransferDirection(raw, cols = guessTransferColumns()) {
+  const payer = String(cols.payerAcctCol ? raw[cols.payerAcctCol] ?? "" : "").trim();
+  const payee = String(cols.payeeAcctCol ? raw[cols.payeeAcctCol] ?? "" : "").trim();
+  const own = String(raw.__own_account ?? "").trim();
+  const benefit = String(cols.benefitCol ? raw[cols.benefitCol] ?? "" : "").trim().toLowerCase();
+
+  if (own && payee) {
+    if (benefit === "credit") return { from: payee, to: own };
+    return { from: own, to: payee };
+  }
+
+  // Fallback for XML formats that carry both payer and payee accounts.
+  return { from: payer || own, to: payee };
 }
 
 // Reference number ("poziv na broj") detection.
@@ -386,45 +469,28 @@ function parseFlexibleDate(str) {
 }
 
 function populateTransferSearchAccountA() {
-  const sel = document.getElementById("transferAcctA");
-  const prevValue = sel.value;
-  const seen = new Map();
-  currentRows.forEach(r => {
-    const acc = r.raw.__own_account;
-    if (!acc) return;
-    const file = r.raw.__source_file || "";
-    if (!seen.has(acc)) seen.set(acc, new Set());
-    seen.get(acc).add(file);
-  });
-  sel.innerHTML = '<option value="">— svi računi —</option>';
-  Array.from(seen.keys()).sort().forEach(acc => {
-    const files = Array.from(seen.get(acc)).join(", ");
-    const opt = document.createElement("option");
-    opt.value = acc;
-    opt.textContent = files ? `${acc} — ${files}` : acc;
-    sel.appendChild(opt);
-  });
-  if (prevValue && seen.has(prevValue)) sel.value = prevValue;
+  // Račun A je ručni unos; ne vezuje se za račun vlasnika jednog izvoda.
 }
 
 function renderTransferSearch() {
-  const { acctBCol, dateCol, amountCol } = guessTransferColumns();
+  const cols = guessTransferColumns();
+  const { amountCol } = cols;
   const refPairs = guessReferenceColumns();
   const hasRef = refPairs.length > 0;
 
-  const acctA = document.getElementById("transferAcctA").value;
-  const acctB = document.getElementById("transferAcctB").value.trim().toLowerCase();
+  const acctA = document.getElementById("transferAcctA").value.trim();
+  const acctB = document.getElementById("transferAcctB").value.trim();
+  const normalizedA = normalizeAccount(acctA);
+  const normalizedB = normalizeAccount(acctB);
   const dateFrom = document.getElementById("transferDateFrom").value ? new Date(document.getElementById("transferDateFrom").value) : null;
   const dateTo = document.getElementById("transferDateTo").value ? new Date(document.getElementById("transferDateTo").value) : null;
 
   let matched = currentRows.filter(r => {
-    if (acctA && r.raw.__own_account !== acctA) return false;
-    if (acctB && acctBCol) {
-      const val = String(r.raw[acctBCol] ?? "").toLowerCase();
-      if (!val.includes(acctB)) return false;
-    }
-    if ((dateFrom || dateTo) && dateCol) {
-      const d = parseFlexibleDate(r.raw[dateCol]);
+    const direction = getTransferDirection(r.raw, cols);
+    if (normalizedA && normalizeAccount(direction.from) !== normalizedA) return false;
+    if (normalizedB && normalizeAccount(direction.to) !== normalizedB) return false;
+    if (dateFrom || dateTo) {
+      const d = parseFlexibleDate(getTransferDateValue(r.raw, cols));
       if (!d) return false;
       if (dateFrom && d < dateFrom) return false;
       if (dateTo && d > dateTo) return false;
@@ -436,7 +502,7 @@ function renderTransferSearch() {
 
   // Header is built dynamically so the reference column only appears when the
   // loaded XML actually contains a reference number field.
-  const headers = ["Datum", "Račun A", "Račun B", "Iznos"];
+  const headers = ["Datum", "Račun A (od)", "Račun B (ka)", "Iznos"];
   if (hasRef) headers.push("Poziv na broj");
   headers.push("Fajl");
   document.getElementById("transferTheadRow").innerHTML =
@@ -451,14 +517,17 @@ function renderTransferSearch() {
       </div>
     </td></tr>`;
   } else {
-    tbody.innerHTML = matched.map(r => `<tr>
-      <td>${escapeHtml(dateCol ? (r.raw[dateCol] ?? "") : "")}</td>
-      <td>${escapeHtml(r.raw.__own_account ?? "")}</td>
-      <td>${escapeHtml(acctBCol ? (r.raw[acctBCol] ?? "") : "")}</td>
+    tbody.innerHTML = matched.map(r => {
+      const direction = getTransferDirection(r.raw, cols);
+      return `<tr>
+      <td>${escapeHtml(getTransferDateValue(r.raw, cols))}</td>
+      <td>${escapeHtml(direction.from)}</td>
+      <td>${escapeHtml(direction.to)}</td>
       <td>${escapeHtml(amountCol ? (r.raw[amountCol] ?? "") : "")}</td>
       ${hasRef ? `<td>${escapeHtml(getReferenceValue(r.raw, refPairs))}</td>` : ""}
       <td>${escapeHtml(r.raw.__source_file ?? "")}</td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
   }
 
   document.getElementById("transferHint").textContent =
@@ -477,20 +546,35 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
     return;
   }
   const rowIndices = transferMatchedRows.map(r => r.idx);
-  const { acctBCol, dateCol, amountCol } = guessTransferColumns();
+  const { dateCol, amountCol } = guessTransferColumns();
   const hasRef = guessReferenceColumns().length > 0;
-  // "__reference" is a virtual column: pdf_export.py computes its value from the raw row.
-  const displayColumns = [dateCol, "__own_account", acctBCol, amountCol, "__reference", "__source_file"].filter(Boolean);
+  // Date and direction columns are virtual: the PDF backend computes them with the same
+  // rules as this table (date preference, benefit-aware direction), so PDF == table.
+  const displayColumns = ["__transfer_date", "__transfer_from", "__transfer_to", amountCol, hasRef ? "__reference" : null, "__source_file"].filter(Boolean);
   const columnLabels = {};
-  if (dateCol) columnLabels[dateCol] = "Datum";
-  if (acctBCol) columnLabels[acctBCol] = "Račun B";
+  columnLabels["__transfer_date"] = "Datum";
+  columnLabels["__transfer_from"] = "Račun A (od)";
+  columnLabels["__transfer_to"] = "Račun B (ka)";
   if (amountCol) columnLabels[amountCol] = "Iznos";
   if (hasRef) columnLabels["__reference"] = "Poziv na broj";
+  const transferMeta = {
+    account_a: document.getElementById("transferAcctA").value.trim(),
+    account_b: document.getElementById("transferAcctB").value.trim(),
+    date_from: document.getElementById("transferDateFrom").value,
+    date_to: document.getElementById("transferDateTo").value,
+    amount_col: amountCol || null,
+  };
   try {
     const resp = await fetch(`/api/batches/${currentBatchId}/export_filtered.pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ row_indices: rowIndices, display_columns: displayColumns, column_labels: columnLabels }),
+      body: JSON.stringify({
+        row_indices: rowIndices,
+        display_columns: displayColumns,
+        column_labels: columnLabels,
+        report_kind: "transfer",
+        transfer_meta: transferMeta,
+      }),
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));

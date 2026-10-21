@@ -11,6 +11,7 @@ Developed by Zeljko Tripcevski
 import io
 import os
 import re
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -22,6 +23,8 @@ from reportlab.platypus import (
     Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
+from paycheck_sentinel.checks import parse_amount
+
 FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 _FONTS_REGISTERED = False
@@ -29,6 +32,14 @@ _FONTS_REGISTERED = False
 # Virtual column name: not a real XML column, its value is computed per row
 # from the reference number fields (see _find_reference_pairs/_reference_value).
 REFERENCE_COLUMN = "__reference"
+
+# Virtual column for the transfer search: the date shown in the table.
+# Computed per row with the same preference order as the UI (see _transfer_date).
+TRANSFER_DATE_COLUMN = "__transfer_date"
+
+# Which date field the transfer search uses, in order of preference.
+# NOTE: keep in sync with TRANSFER_DATE_PREFERENCE in static/app.js.
+TRANSFER_DATE_PREFERENCE = ["dtavail", "dtposted"]
 
 # Reference number ("poziv na broj") detection. Matching is done on the last
 # segment of the flattened column name, so "payeerefnumber" and
@@ -83,6 +94,71 @@ def _find_reference_pairs(columns):
     return pairs
 
 
+def _transfer_direction(raw, columns):
+    """
+    Direction of a payment as (from, to), mirrors getTransferDirection() in static/app.js.
+
+    iBank statements only carry the counterparty account (payeeaccountinfo/acctid);
+    the statement owner is __own_account and the direction comes from "benefit":
+      debit  = owner -> counterparty
+      credit = counterparty -> owner
+    """
+    def find_col(parent, leaf):
+        for col in columns:
+            parts = str(col).split(".")
+            if len(parts) >= 2 and "".join(ch for ch in parts[-1].lower() if ch.isalnum()) == leaf:
+                parent_name = "".join(ch for ch in ".".join(parts[:-1]).lower() if ch.isalnum())
+                if parent_name.endswith(parent):
+                    return col
+        return None
+
+    own = str(raw.get("__own_account") or "").strip()
+    payee_col = find_col("payeeaccountinfo", "acctid")
+    payer_col = find_col("payeraccountinfo", "acctid")
+    payee = str(raw.get(payee_col) or "").strip() if payee_col else ""
+    payer = str(raw.get(payer_col) or "").strip() if payer_col else ""
+
+    benefit_col = _find_column_by_last_segment(columns, "benefit")
+    benefit = str(raw.get(benefit_col) or "").strip().lower() if benefit_col else ""
+
+    if own and payee:
+        if benefit == "credit":
+            return payee, own
+        return own, payee
+    return payer or own, payee
+
+
+def _transfer_date(raw, columns):
+    """
+    Date shown in the transfer table, mirrors guessTransferColumns()/getTransferDateValue()
+    in static/app.js: first existing column from TRANSFER_DATE_PREFERENCE, per-row fallback
+    to dtposted when that value is empty.
+    """
+    primary_col = None
+    for name in TRANSFER_DATE_PREFERENCE:
+        primary_col = _find_column_by_last_segment(columns, name)
+        if primary_col:
+            break
+    if not primary_col:
+        for c in columns:
+            n = _normalize(c)
+            if "dtposted" in n:
+                primary_col = c
+                break
+        if not primary_col:
+            for c in columns:
+                n = _normalize(c)
+                if "datum" in n or "date" in n:
+                    primary_col = c
+                    break
+
+    value = str(raw.get(primary_col) or "").strip() if primary_col else ""
+    if value:
+        return value
+    fallback_col = _find_column_by_last_segment(columns, "dtposted")
+    return str(raw.get(fallback_col) or "").strip() if fallback_col else ""
+
+
 def _reference_value(raw, ref_pairs):
     """Return 'model number' (or just 'number') from the first pair that has a number, else ''."""
     for p in ref_pairs:
@@ -94,7 +170,13 @@ def _reference_value(raw, ref_pairs):
     return ""
 
 
-def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kind="flagged", display_columns_override=None, column_labels_override=None):
+def _format_amount_sr(value):
+    """1234567.8 -> '1.234.567,80' (Serbian number format)."""
+    s = f"{value:,.2f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kind="flagged", display_columns_override=None, column_labels_override=None, transfer_meta=None):
     """
     Vraca BytesIO sa gotovim PDF-om.
 
@@ -110,12 +192,19 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
            tacno ovaj (uzi, unapred odabrani) skup kolona umesto automatskog
            pogadjanja po modu. Koristi se npr. za fokusiranu pretragu
            transfera gde nema klasicnog mapiranja kolona. Moze da sadrzi i
-           virtuelnu kolonu "__reference" (poziv na broj) cija se vrednost
-           racuna iz sirovog reda.
+           virtuelne kolone "__reference" (poziv na broj), "__transfer_from",
+           "__transfer_to" i "__transfer_date" cija se vrednost racuna iz
+           sirovog reda.
     column_labels_override: dict[str, str] | None — citljivi naziv za pojedine
            kolone (npr. {"dtposted": "Datum"}) umesto sirovog XML naziva taga.
+    transfer_meta: dict | None — samo za report_kind == "transfer" (pretraga
+           "Transfer između računa"): account_a, account_b, date_from, date_to,
+           amount_col. Koristi se za zaglavlje i ukupan iznos u PDF-u.
     """
     _ensure_fonts()
+
+    is_transfer_report = report_kind == "transfer"
+    transfer_meta = transfer_meta or {}
 
     display_columns = display_columns_override if display_columns_override else _pick_display_columns(batch, columns, mode)
     column_labels_override = column_labels_override or {}
@@ -155,40 +244,66 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
         "flagged": "Izveštaj o upozorenjima",
         "all": "Izveštaj o svim transakcijama",
         "filtered": "Izveštaj o filtriranim rezultatima",
+        "transfer": "Izveštaj o transferu između računa",
     }
     title_text = titles.get(report_kind, "Izveštaj o upozorenjima")
     story.append(Paragraph(title_text, title_style))
     story.append(Spacer(1, 4 * mm))
 
-    meta_lines = [f"Batch #{batch['id']} — {batch.get('label', '')}"]
-    if batch.get("own_account"):
-        meta_lines.append(f"Račun vlasnika izvoda: {batch['own_account']}")
-    created = (batch.get("created_at") or "").replace("T", " ")[:16]
-    if created:
-        meta_lines.append(f"Datum upload-a: {created}")
-    if mode == "bank_statement":
-        mode_label = "Bankovni izvod (kružni povrat)"
-    elif mode == "transfer":
-        mode_label = "Transfer između računa"
-        if batch.get("account_from") or batch.get("account_to"):
-            meta_lines.append(f"Račun A (sa kog se plaća): {batch.get('account_from') or '—'}")
-            meta_lines.append(f"Račun B (na koji se plaća): {batch.get('account_to') or '—'}")
+    meta_lines = [f"Batch #{batch['id']} — {_xml_escape(str(batch.get('label', '')))}"]
+    if is_transfer_report:
+        # Header of the transfer search report: what was searched for, as typed in the UI.
+        account_a = _xml_escape(str(transfer_meta.get("account_a") or "").strip()) or "—"
+        account_b = _xml_escape(str(transfer_meta.get("account_b") or "").strip()) or "—"
+        meta_lines.append(f"Račun A (od): {account_a}")
+        meta_lines.append(f"Račun B (ka): {account_b}")
+        date_from = _xml_escape(str(transfer_meta.get("date_from") or "").strip())
+        date_to = _xml_escape(str(transfer_meta.get("date_to") or "").strip())
+        if date_from or date_to:
+            meta_lines.append(f"Period: {date_from or '…'} — {date_to or '…'}")
+        created = (batch.get("created_at") or "").replace("T", " ")[:16]
+        if created:
+            meta_lines.append(f"Datum upload-a: {created}")
     else:
-        mode_label = "Standardno (plaćeno/vraćeno)"
-    meta_lines.append(f"Mod analize: {mode_label}")
+        if batch.get("own_account"):
+            meta_lines.append(f"Račun vlasnika izvoda: {batch['own_account']}")
+        created = (batch.get("created_at") or "").replace("T", " ")[:16]
+        if created:
+            meta_lines.append(f"Datum upload-a: {created}")
+        if mode == "bank_statement":
+            mode_label = "Bankovni izvod (kružni povrat)"
+        elif mode == "transfer":
+            mode_label = "Transfer između računa"
+            if batch.get("account_from") or batch.get("account_to"):
+                meta_lines.append(f"Račun A (sa kog se plaća): {batch.get('account_from') or '—'}")
+                meta_lines.append(f"Račun B (na koji se plaća): {batch.get('account_to') or '—'}")
+        else:
+            mode_label = "Standardno (plaćeno/vraćeno)"
+        meta_lines.append(f"Mod analize: {mode_label}")
 
     for line in meta_lines:
         story.append(Paragraph(line, normal_style))
     story.append(Spacer(1, 4 * mm))
 
     # statistika
-    stat_data = [["Ukupno redova", "Sa upozorenjem", "Pun povrat / potvrđeno", "Iznos punog povrata"]]
-    stat_data.append([
-        str(stats.get("total", "")),
-        str(stats.get("flagged_count", "")),
-        str(stats.get("full_count", stats.get("confirmed_count", ""))),
-        str(stats.get("full_sum", stats.get("confirmed_sum", ""))),
-    ])
+    if is_transfer_report:
+        amount_col = transfer_meta.get("amount_col")
+        total_amount = 0.0
+        if amount_col:
+            for r in rows:
+                parsed = parse_amount(r.get("raw", {}).get(amount_col))
+                if parsed:
+                    total_amount += parsed
+        stat_data = [["Broj stavki", "Ukupan iznos"]]
+        stat_data.append([str(len(rows)), _format_amount_sr(total_amount) if amount_col else "—"])
+    else:
+        stat_data = [["Ukupno redova", "Sa upozorenjem", "Pun povrat / potvrđeno", "Iznos punog povrata"]]
+        stat_data.append([
+            str(stats.get("total", "")),
+            str(stats.get("flagged_count", "")),
+            str(stats.get("full_count", stats.get("confirmed_count", ""))),
+            str(stats.get("full_sum", stats.get("confirmed_sum", ""))),
+        ])
     stat_table = Table(stat_data, hAlign="LEFT")
     stat_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), "DejaVuSans"),
@@ -204,8 +319,10 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
     story.append(Spacer(1, 6 * mm))
 
     # glavna tabela transakcija
-    header_row = [Paragraph(column_labels_override.get(c) or _column_label(c), header_style) for c in display_columns] + \
-                 [Paragraph("Upozorenja", header_style)]
+    # The transfer report shows exactly the columns of the on-screen table (no "Upozorenja" column).
+    header_row = [Paragraph(column_labels_override.get(c) or _column_label(c), header_style) for c in display_columns]
+    if not is_transfer_report:
+        header_row.append(Paragraph("Upozorenja", header_style))
 
     table_data = [header_row]
     row_colors = []
@@ -215,14 +332,26 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
         for c in display_columns:
             if c == REFERENCE_COLUMN:
                 value = _reference_value(raw, ref_pairs)
+            elif c in ("__transfer_from", "__transfer_to"):
+                transfer_from, transfer_to = _transfer_direction(raw, columns)
+                value = transfer_from if c == "__transfer_from" else transfer_to
+            elif c == TRANSFER_DATE_COLUMN:
+                value = _transfer_date(raw, columns)
             else:
                 value = raw.get(c, "")
-            row_cells.append(Paragraph(_truncate(value), cell_style))
+            text = _truncate(value)
+            if is_transfer_report:
+                text = _xml_escape(text)
+            row_cells.append(Paragraph(text, cell_style))
         flags = r.get("flags", [])
-        flags_text = "+".join(f["label"] for f in flags) if flags else "OK"
-        row_cells.append(Paragraph(flags_text, cell_style))
+        if not is_transfer_report:
+            flags_text = "+".join(f["label"] for f in flags) if flags else "OK"
+            row_cells.append(Paragraph(flags_text, cell_style))
         table_data.append(row_cells)
 
+        if is_transfer_report:
+            row_colors.append(None)
+            continue
         is_full = any(f["type"] in ("full", "circular_confirmed", "transfer") for f in flags)
         if is_full:
             row_colors.append(colors.HexColor("#fbdede"))
@@ -235,7 +364,7 @@ def build_pdf_report(batch, columns, rows, stats, only_flagged, mode, report_kin
         story.append(Paragraph("Nema redova za prikaz.", normal_style))
     else:
         available_width = landscape(A4)[0] - 28 * mm
-        col_count = len(display_columns) + 1
+        col_count = len(display_columns) + (0 if is_transfer_report else 1)
         col_width = available_width / col_count
         main_table = Table(table_data, colWidths=[col_width] * col_count, repeatRows=1)
         style_commands = [
@@ -299,6 +428,8 @@ def _column_label(col):
         return "Račun A"
     if col == REFERENCE_COLUMN:
         return "Poziv na broj"
+    if col == TRANSFER_DATE_COLUMN:
+        return "Datum"
     return col.split(".")[-1]
 
 
