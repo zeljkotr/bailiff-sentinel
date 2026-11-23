@@ -1,3 +1,33 @@
+// ---- authentication: CSRF header on state-changing requests, sign-in redirect, sign-out ----
+const CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+function redirectToLogin() {
+  window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
+}
+
+(function installAuthFetch() {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    init = init || {};
+    const method = String(init.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "HEAD") {
+      init = { ...init, headers: { ...(init.headers || {}), "X-CSRF-Token": CSRF_TOKEN } };
+    }
+    const response = await originalFetch(input, init);
+    if (response.status === 401) redirectToLogin();   // the session expired
+    return response;
+  };
+})();
+
+const logoutLink = document.getElementById("logoutLink");
+if (logoutLink) {
+  logoutLink.addEventListener("click", async event => {
+    event.preventDefault();
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) { /* ignore */ }
+    window.location.href = "/login";
+  });
+}
+
 let currentBatchId = null;
 let currentColumns = [];
 let currentRows = [];
@@ -83,13 +113,13 @@ setStep(1);
     event.preventDefault();
     const token = input.value.trim();
     if (!token) {
-      message.textContent = "Unesi aktivacioni ključ.";
+      message.textContent = "Enter the activation key.";
       message.style.color = "var(--coral)";
       return;
     }
 
     button.disabled = true;
-    message.textContent = "Proveravam licencu...";
+    message.textContent = "Checking license...";
     message.style.color = "var(--muted)";
 
     try {
@@ -101,14 +131,14 @@ setStep(1);
       const result = await response.json();
 
       if (!response.ok || !result.ok) {
-        throw new Error(result.error || "Aktivacija nije uspela.");
+        throw new Error(result.error || "Activation failed.");
       }
 
-      message.textContent = "Licenca je aktivirana. Osvežavam aplikaciju...";
+      message.textContent = "License activated. Reloading the application...";
       message.style.color = "var(--teal)";
       window.location.reload();
     } catch (error) {
-      message.textContent = error.message || "Greška pri aktivaciji licence.";
+      message.textContent = error.message || "Error while activating the license.";
       message.style.color = "var(--coral)";
     } finally {
       button.disabled = false;
@@ -141,37 +171,44 @@ function clearErr() {
   parseErr.classList.add("hidden");
 }
 
+// Shows the free-version quota under the drop zone (the text is empty with a commercial license).
+function updateQuotaNote(license) {
+  const note = document.getElementById("quotaNote");
+  if (note && license) note.textContent = license.summary || "";
+}
+
 function uploadFiles(fileListRaw) {
   clearErr();
   const files = Array.from(fileListRaw).filter(f => /\.xml$/i.test(f.name));
   if (files.length === 0) {
-    showErr("Nijedan .xml fajl nije pronađen u onome što je prevučeno.");
+    showErr("No .xml file was found in what was dropped.");
     return;
   }
 
-  document.getElementById("dzText").textContent = `Šaljem ${files.length} fajl(ova) na server...`;
+  document.getElementById("dzText").textContent = `Uploading ${files.length} file(s) to the server...`;
 
   const progressWrap = document.getElementById("uploadProgress");
   const progressFill = document.getElementById("progressFill");
   const progressLabel = document.getElementById("progressLabel");
   progressWrap.classList.remove("hidden", "indeterminate");
   progressFill.style.width = "0%";
-  progressLabel.textContent = `Šaljem podatke... 0%`;
+  progressLabel.textContent = `Uploading data... 0%`;
 
   const formData = new FormData();
   files.forEach(f => formData.append("files", f));
 
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/upload");
+  xhr.setRequestHeader("X-CSRF-Token", CSRF_TOKEN);
 
   xhr.upload.addEventListener("progress", e => {
     if (!e.lengthComputable) return;
     const pct = Math.round((e.loaded / e.total) * 100);
     progressFill.style.width = pct + "%";
-    progressLabel.textContent = `Šaljem podatke... ${pct}%`;
+    progressLabel.textContent = `Uploading data... ${pct}%`;
     if (pct >= 100) {
       progressWrap.classList.add("indeterminate");
-      progressLabel.textContent = "Obrađujem XML fajlove...";
+      progressLabel.textContent = "Processing XML files...";
     }
   });
 
@@ -179,16 +216,22 @@ function uploadFiles(fileListRaw) {
     progressWrap.classList.add("hidden");
     progressWrap.classList.remove("indeterminate");
 
+    if (xhr.status === 401) { redirectToLogin(); return; }   // the session expired
+
     let data;
     try {
       data = JSON.parse(xhr.responseText);
     } catch (e) {
-      showErr("Greška u komunikaciji sa serverom: neispravan odgovor.");
+      showErr("Server communication error: invalid response.");
       return;
     }
 
+    // The server includes the current license/quota status in upload responses,
+    // also when it refuses the upload because the free limit is used up (HTTP 429).
+    if (data.license) updateQuotaNote(data.license);
+
     if (xhr.status < 200 || xhr.status >= 300) {
-      showErr(data.error || "Greška pri upload-u.");
+      showErr(data.error || "Upload error.");
       return;
     }
 
@@ -197,10 +240,10 @@ function uploadFiles(fileListRaw) {
     currentOwnAccount = data.own_account;
 
     document.getElementById("dzText").textContent =
-      `Učitano ${data.file_names.length} fajl(ova) — ukupno ${data.row_count} redova`;
+      `Loaded ${data.file_names.length} file(s) — ${data.row_count} rows in total`;
 
     if (data.errors && data.errors.length) {
-      showErr("Preskočeno neki fajlovi:\n" + data.errors.join("\n"));
+      showErr("Some files were skipped:\n" + data.errors.join("\n"));
     }
 
     document.getElementById("rowCount").textContent = data.row_count;
@@ -210,7 +253,7 @@ function uploadFiles(fileListRaw) {
 
     const ownNote = document.getElementById("ownAccountNote");
     if (data.own_account) {
-      ownNote.textContent = `Prepoznat račun vlasnika izvoda: ${data.own_account} — iBank format detektovan, preporučen mod "Bankovni izvod".`;
+      ownNote.textContent = `Statement owner account recognized: ${data.own_account} — iBank format detected, recommended mode "Bank statement".`;
       document.getElementById("modeBank").checked = true;
     } else {
       ownNote.textContent = "";
@@ -233,12 +276,14 @@ function uploadFiles(fileListRaw) {
   xhr.onerror = () => {
     progressWrap.classList.add("hidden");
     progressWrap.classList.remove("indeterminate");
-    showErr("Greška u komunikaciji sa serverom.");
+    showErr("Server communication error.");
   };
 
   xhr.send(formData);
 }
 
+// Strips Serbian diacritics and non-alphanumerics so column names can be matched loosely.
+// Do not remove the diacritic mappings: uploaded data may still contain Serbian column names.
 function normalize(s) {
   return (s || "").toLowerCase()
     .replace(/[čć]/g, "c").replace(/š/g, "s").replace(/ž/g, "z").replace(/đ/g, "dj")
@@ -250,7 +295,7 @@ function fillSelect(sel, columns, includeNone) {
   if (includeNone) {
     const o = document.createElement("option");
     o.value = NONE;
-    o.textContent = "-- (ne koristi) --";
+    o.textContent = "-- (don't use) --";
     sel.appendChild(o);
   }
   columns.forEach(c => {
@@ -274,13 +319,16 @@ function resetResultFilters() {
 
 function populateAcctFilterColumn(columns) {
   const sel = document.getElementById("acctFilterCol");
-  sel.innerHTML = '<option value="">— kolona —</option>';
+  sel.innerHTML = '<option value="">— column —</option>';
   columns.forEach(c => {
     const opt = document.createElement("option");
     opt.value = c;
     opt.textContent = c;
     sel.appendChild(opt);
   });
+  // The tokens below are matched against (normalized) column names in the loaded data,
+  // so the Serbian ones (primalac = recipient, poverilac = creditor, racun = account,
+  // duznik = debtor, platilac = payer) are kept on purpose.
   const guess = columns.find(c => normalize(c).includes("payeeaccountinfo")) ||
                 columns.find(c => normalize(c).includes("primalac")) ||
                 columns.find(c => normalize(c).includes("poverilac")) ||
@@ -304,7 +352,7 @@ function populateOwnAccountFilter() {
     seen.get(acc).add(file);
   });
 
-  sel.innerHTML = '<option value="">— svi računi —</option>';
+  sel.innerHTML = '<option value="">— all accounts —</option>';
   Array.from(seen.keys()).sort().forEach(acc => {
     const files = Array.from(seen.get(acc)).join(", ");
     const opt = document.createElement("option");
@@ -316,7 +364,7 @@ function populateOwnAccountFilter() {
   if (prevValue && seen.has(prevValue)) sel.value = prevValue;
 }
 
-// ---- Transfer između računa: fokusirana pretraga (Račun A, Račun B, period, PDF izvoz) ----
+// ---- Transfer between accounts: focused search (Account A, Account B, period, PDF export) ----
 let transferMatchedRows = [];
 
 // Which date field the transfer search uses, in order of preference.
@@ -348,6 +396,7 @@ function guessTransferColumns() {
     dateCol = cols.find(c => lastColumnSegment(c) === name) || null;
     if (dateCol) break;
   }
+  // "datum" (Serbian for date) is kept as a fallback token for non-iBank data.
   dateCol = dateCol ||
             cols.find(c => normalize(c).includes("dtposted")) ||
             cols.find(c => normalize(c).includes("datum")) ||
@@ -355,6 +404,7 @@ function guessTransferColumns() {
   // Fallback used per row when the preferred date field is empty.
   const fallbackDateCol = cols.find(c => lastColumnSegment(c) === "dtposted") || null;
 
+  // "iznos" (Serbian for amount) is kept as a fallback token for non-iBank data.
   const amountCol = cols.find(c => normalize(c).includes("trnamt")) ||
                     cols.find(c => normalize(c).includes("iznos")) ||
                     cols.find(c => normalize(c).includes("amount"));
@@ -419,7 +469,7 @@ function getTransferDirection(raw, cols = guessTransferColumns()) {
   return { from: payer || own, to: payee };
 }
 
-// Reference number ("poziv na broj") detection.
+// Reference number ("poziv na broj" in Serbian) detection.
 // Matching is done on the LAST segment of the flattened column name, so it works
 // whether the parser produced "payeerefnumber" or e.g. "payeeinfo.payeerefnumber".
 // Pairs are tried in order; the first pair with a non-empty number wins for a row.
@@ -459,17 +509,17 @@ function getReferenceValue(raw, refPairs) {
 function parseFlexibleDate(str) {
   if (!str) return null;
   const s = String(str).trim();
-  let m = s.match(/^(\d{4})(\d{2})(\d{2})/); // YYYYMMDD (npr. OFX dtposted)
+  let m = s.match(/^(\d{4})(\d{2})(\d{2})/); // YYYYMMDD (e.g. OFX dtposted)
   if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // YYYY-MM-DD
   if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/); // DD.MM.YYYY ili DD/MM/YYYY
+  m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/); // DD.MM.YYYY or DD/MM/YYYY
   if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
   return null;
 }
 
 function populateTransferSearchAccountA() {
-  // Račun A je ručni unos; ne vezuje se za račun vlasnika jednog izvoda.
+  // Account A is entered manually; it is not tied to the owner account of a single statement.
 }
 
 function renderTransferSearch() {
@@ -502,9 +552,9 @@ function renderTransferSearch() {
 
   // Header is built dynamically so the reference column only appears when the
   // loaded XML actually contains a reference number field.
-  const headers = ["Datum", "Račun A (od)", "Račun B (ka)", "Iznos"];
-  if (hasRef) headers.push("Poziv na broj");
-  headers.push("Fajl");
+  const headers = ["Date", "Account A (from)", "Account B (to)", "Amount"];
+  if (hasRef) headers.push("Reference number");
+  headers.push("File");
   document.getElementById("transferTheadRow").innerHTML =
     headers.map(h => `<th>${escapeHtml(h)}</th>`).join("");
 
@@ -513,7 +563,7 @@ function renderTransferSearch() {
     tbody.innerHTML = `<tr><td colspan="${headers.length}">
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        Nijedan red ne odgovara ovoj pretrazi.
+        No rows match this search.
       </div>
     </td></tr>`;
   } else {
@@ -531,7 +581,7 @@ function renderTransferSearch() {
   }
 
   document.getElementById("transferHint").textContent =
-    `Prikazano ${matched.length} od ${currentRows.length} red(ova).`;
+    `Showing ${matched.length} of ${currentRows.length} row(s).`;
 }
 
 ["transferAcctA", "transferAcctB", "transferDateFrom", "transferDateTo"].forEach(id => {
@@ -542,7 +592,7 @@ function renderTransferSearch() {
 document.getElementById("transferExportPdfBtn").addEventListener("click", async () => {
   if (!currentBatchId) return;
   if (!transferMatchedRows.length) {
-    showErr("Nema redova za izvoz — trenutna pretraga ne pogađa nijedan red.");
+    showErr("No rows to export — the current search matches no rows.");
     return;
   }
   const rowIndices = transferMatchedRows.map(r => r.idx);
@@ -552,11 +602,11 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
   // rules as this table (date preference, benefit-aware direction), so PDF == table.
   const displayColumns = ["__transfer_date", "__transfer_from", "__transfer_to", amountCol, hasRef ? "__reference" : null, "__source_file"].filter(Boolean);
   const columnLabels = {};
-  columnLabels["__transfer_date"] = "Datum";
-  columnLabels["__transfer_from"] = "Račun A (od)";
-  columnLabels["__transfer_to"] = "Račun B (ka)";
-  if (amountCol) columnLabels[amountCol] = "Iznos";
-  if (hasRef) columnLabels["__reference"] = "Poziv na broj";
+  columnLabels["__transfer_date"] = "Date";
+  columnLabels["__transfer_from"] = "Account A (from)";
+  columnLabels["__transfer_to"] = "Account B (to)";
+  if (amountCol) columnLabels[amountCol] = "Amount";
+  if (hasRef) columnLabels["__reference"] = "Reference number";
   const transferMeta = {
     account_a: document.getElementById("transferAcctA").value.trim(),
     account_b: document.getElementById("transferAcctB").value.trim(),
@@ -578,7 +628,7 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      showErr(data.error || "Greška pri izvozu.");
+      showErr(data.error || "Export error.");
       return;
     }
     const blob = await resp.blob();
@@ -591,7 +641,7 @@ document.getElementById("transferExportPdfBtn").addEventListener("click", async 
     a.remove();
     URL.revokeObjectURL(url);
   } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
+    showErr("Server communication error: " + err.message);
   }
 });
 
@@ -608,7 +658,7 @@ async function loadRawRows(batchId) {
     if (document.querySelector('input[name="analysisMode"]:checked').value === "transfer") renderTransferSearch();
     renderResults();
   } catch (err) {
-    // preview je best-effort - ako ne uspe, rezultati ce se pojaviti nakon Analiziraj klika
+    // the preview is best-effort - if it fails, results will appear after clicking Analyze
   }
 }
 
@@ -625,6 +675,9 @@ function populateColumnSelectors(columns) {
   fillSelect(debtorSel, columns, true);
   fillSelect(dateSel, columns, true);
 
+  // Guess tokens are matched against column names of the uploaded data, which can be Serbian
+  // (placeno banci = paid to bank, banka uplatila meni = bank paid back to me, broj naloga =
+  // order number, duznik = debtor, platilac = payer, datum = date). They are kept on purpose.
   const paidGuess = columns.find(c => normalize(c).includes("placenobanci")) ||
                      columns.find(c => normalize(c).includes("placeno") && normalize(c).includes("banc"));
   const retGuess = columns.find(c => normalize(c).includes("bankauplatila")) ||
@@ -680,6 +733,8 @@ function populateBankColumnSelectors(columns) {
   fillSelect(refSel, columns, true);
   fillSelect(dateSel, columns, true);
 
+  // Serbian tokens kept on purpose (iznos = amount, smer = direction, refbroj = reference number,
+  // datum = date): they match column names of non-iBank data.
   const amountGuess = columns.find(c => normalize(c).includes("trnamt")) ||
                       columns.find(c => normalize(c).includes("amount")) ||
                       columns.find(c => normalize(c).includes("iznos"));
@@ -720,7 +775,7 @@ async function runBankAnalysis() {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      showErr(data.error || "Greška pri analizi.");
+      showErr(data.error || "Error during analysis.");
       return;
     }
 
@@ -734,7 +789,7 @@ async function runBankAnalysis() {
     setStep(3);
     loadHistory();
   } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
+    showErr("Server communication error: " + err.message);
   }
 }
 
@@ -774,7 +829,7 @@ async function runAnalysis() {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      showErr(data.error || "Greška pri analizi.");
+      showErr(data.error || "Error during analysis.");
       return;
     }
 
@@ -788,7 +843,7 @@ async function runAnalysis() {
     setStep(3);
     loadHistory();
   } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
+    showErr("Server communication error: " + err.message);
   }
 }
 
@@ -798,7 +853,7 @@ function computeClientStats(rows) {
   const fullType = currentMode === "bank" ? "circular_confirmed" : "full";
   const fullRows = active.filter(r => r.flags.some(f => f.type === fullType));
   let fullSum = fullRows.reduce((acc, r) => acc + (r.paid_amount || 0), 0);
-  if (currentMode === "bank") fullSum = fullSum / 2; // par se racuna 2x (debit+credit)
+  if (currentMode === "bank") fullSum = fullSum / 2; // a pair is counted twice (debit + credit)
   return {
     total: rows.length,
     flagged_count: flagged.length,
@@ -844,7 +899,7 @@ function toggleFalseAlarm(rowIdx, checked) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ row_index: rowIdx, value: checked }),
-  }).catch(() => { /* tiho ignorisi - lokalni prikaz je vec azuriran */ });
+  }).catch(() => { /* silently ignore - the local view is already updated */ });
 }
 window.toggleFalseAlarm = toggleFalseAlarm;
 
@@ -854,10 +909,10 @@ function renderResults() {
 
   const colDefs = [
     { key: "__idx", label: "#" },
-    { key: "__source", label: "Izvorni fajl" },
+    { key: "__source", label: "Source file" },
     ...currentColumns.map(c => ({ key: c, label: c })),
-    { key: "__flags", label: "Upozorenja" },
-    { key: "__falsealarm", label: "Lažna uzbuna" },
+    { key: "__flags", label: "Warnings" },
+    { key: "__falsealarm", label: "False alarm" },
   ];
 
   theadRow.innerHTML = colDefs.map(cd => {
@@ -884,7 +939,7 @@ function renderResults() {
       const matchB = !(acctCol && acctValue) || String(r.raw[acctCol] ?? "").toLowerCase().includes(acctValue);
       return matchA && matchB;
     });
-    acctHint.textContent = `Filter aktivan — prikazano ${toShow.length} od ${beforeCount} red(ova).`;
+    acctHint.textContent = `Filter active — showing ${toShow.length} of ${beforeCount} row(s).`;
   } else {
     acctHint.textContent = "";
   }
@@ -924,7 +979,7 @@ function renderResults() {
     tbody.innerHTML = `<tr><td colspan="${colspan}">
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        Nijedan red ne odgovara trenutnom filteru.
+        No rows match the current filter.
       </div>
     </td></tr>`;
   }
@@ -935,24 +990,26 @@ function renderResults() {
   document.getElementById("statFull").textContent = stats.full_count;
   document.getElementById("statSum").textContent = stats.full_sum.toLocaleString("sr-RS", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  // NOTE: the badge texts in the legend below must match the labels that the backend
+  // (paycheck_sentinel/checks.py) puts into f.label, because the table badges use f.label directly.
   const legendBox = document.getElementById("legendBox");
   const statFullLabel = document.querySelector("#statFull").closest(".stat").querySelector(".l");
   const statSumLabel = document.querySelector("#statSum").closest(".stat").querySelector(".l");
   if (currentMode === "bank") {
     legendBox.innerHTML = `
-      <span><span class="badge circular_confirmed">POVRAT (ref. broj)</span> pouzdano uparen povrat</span>
-      <span><span class="badge circular_possible">MOGUĆ POVRAT (iznos)</span> uparen po iznosu/datumu</span>`;
-    statFullLabel.textContent = "Potvrđen povrat";
-    statSumLabel.textContent = "Iznos potvrđenog povrata";
+      <span><span class="badge circular_confirmed">REFUND (ref. number)</span> reliably matched refund</span>
+      <span><span class="badge circular_possible">POSSIBLE REFUND (amount)</span> matched by amount/date</span>`;
+    statFullLabel.textContent = "Confirmed refund";
+    statSumLabel.textContent = "Confirmed refund amount";
   } else {
     legendBox.innerHTML = `
-      <span><span class="badge full">PUN POVRAT</span> tačno poklapanje</span>
-      <span><span class="badge partial">DELIMIČAN</span> delimičan povrat</span>
-      <span><span class="badge dupid">DUP. ID</span> dupli broj naloga</span>
-      <span><span class="badge duppay">DUP. UPLATA</span> ista uplata ponovljena</span>
-      <span><span class="badge outlier">OUTLIER</span> neuobičajen iznos</span>`;
-    statFullLabel.textContent = "Pun povrat";
-    statSumLabel.textContent = "Iznos punog povrata";
+      <span><span class="badge full">FULL REFUND</span> exact match</span>
+      <span><span class="badge partial">PARTIAL</span> partial refund</span>
+      <span><span class="badge dupid">DUP. ID</span> duplicate order number</span>
+      <span><span class="badge duppay">DUP. PAYMENT</span> same payment repeated</span>
+      <span><span class="badge outlier">OUTLIER</span> unusual amount</span>`;
+    statFullLabel.textContent = "Full refund";
+    statSumLabel.textContent = "Full refund amount";
   }
 
   const resultsPanel = document.getElementById("resultsPanel");
@@ -1035,7 +1092,7 @@ document.getElementById("exportAllPdfBtn").addEventListener("click", () => {
 document.getElementById("exportFilteredPdfBtn").addEventListener("click", async () => {
   if (!currentBatchId) return;
   if (!lastRenderedRows.length) {
-    showErr("Nema redova za izvoz — trenutni filter ne pogađa nijedan red.");
+    showErr("No rows to export — the current filter matches no rows.");
     return;
   }
   const rowIndices = lastRenderedRows.map(r => r.idx);
@@ -1047,20 +1104,20 @@ document.getElementById("exportFilteredPdfBtn").addEventListener("click", async 
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      showErr(data.error || "Greška pri izvozu filtriranih rezultata.");
+      showErr(data.error || "Error while exporting the filtered results.");
       return;
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `paycheck-sentinel-batch${currentBatchId}-filtrirano.pdf`;
+    a.download = `paycheck-sentinel-batch${currentBatchId}-filtered.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   } catch (err) {
-    showErr("Greška u komunikaciji sa serverom: " + err.message);
+    showErr("Server communication error: " + err.message);
   }
 });
 
@@ -1074,7 +1131,7 @@ async function loadHistory() {
       tbody.innerHTML = `<tr><td colspan="7">
         <div class="empty-state">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-          Nema još učitanih fajlova.
+          No files uploaded yet.
         </div>
       </td></tr>`;
       return;
@@ -1086,16 +1143,16 @@ async function loadHistory() {
         <td>${escapeHtml(b.label)}</td>
         <td>${escapeHtml(b.created_at.replace("T", " ").slice(0, 16))}</td>
         <td>${b.row_count}</td>
-        <td>${b.analyzed ? "da" : "ne"}</td>
+        <td>${b.analyzed ? "yes" : "no"}</td>
         <td>${b.analyzed ? b.flagged_count : "-"}</td>
         <td>
-          <button class="secondary tiny" onclick="openBatch(${b.id})">Otvori</button>
-          <button class="secondary tiny" onclick="deleteBatch(${b.id})">Obriši</button>
+          <button class="secondary tiny" onclick="openBatch(${b.id})">Open</button>
+          <button class="secondary tiny" onclick="deleteBatch(${b.id})">Delete</button>
         </td>
       </tr>
     `).join("");
   } catch (err) {
-    // tiho ignorisi gresku istorije, ne blokira glavni tok
+    // silently ignore history errors, they do not block the main flow
   }
 }
 
@@ -1104,7 +1161,7 @@ async function openBatch(batchId) {
   const resp = await fetch(`/api/batches/${batchId}/results`);
   const data = await resp.json();
   if (!resp.ok) {
-    showErr(data.error || "Greška pri učitavanju batch-a.");
+    showErr(data.error || "Error while loading the batch.");
     return;
   }
 
@@ -1117,7 +1174,7 @@ async function openBatch(batchId) {
   document.getElementById("rowCount").textContent = data.batch.row_count;
   document.getElementById("colCount").textContent = currentColumns.length;
   document.getElementById("batchLabel").textContent = `(batch #${batchId})`;
-  document.getElementById("dzText").textContent = `Otvoren batch #${batchId} — ${data.batch.row_count} redova`;
+  document.getElementById("dzText").textContent = `Opened batch #${batchId} — ${data.batch.row_count} rows`;
 
   populateColumnSelectors(currentColumns);
   populateAcctFilterColumn(currentColumns);
@@ -1125,7 +1182,7 @@ async function openBatch(batchId) {
   populateTransferSearchAccountA();
   resetResultFilters();
 
-  // popuni prethodno mapiranje ako postoji
+  // restore the previous column mapping if there is one
   if (data.batch.paid_col) document.getElementById("colPaid").value = data.batch.paid_col;
   if (data.batch.returned_col) document.getElementById("colReturned").value = data.batch.returned_col;
   if (data.batch.id_col) document.getElementById("colId").value = data.batch.id_col;
@@ -1159,7 +1216,7 @@ async function openBatch(batchId) {
 }
 
 async function deleteBatch(batchId) {
-  if (!confirm(`Obrisati batch #${batchId}? Ovo je trajno.`)) return;
+  if (!confirm(`Delete batch #${batchId}? This is permanent.`)) return;
   await fetch(`/api/batches/${batchId}`, { method: "DELETE" });
   if (currentBatchId === batchId) {
     currentBatchId = null;

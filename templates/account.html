@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>Account — Paycheck Sentinel</title>
+<link rel="icon" type="image/svg+xml" sizes="any" href="{{ versioned_static('favicon.svg') }}">
+<link rel="icon" type="image/x-icon" sizes="48x48" href="{{ versioned_static('favicon.ico') }}">
+<link rel="apple-touch-icon" href="{{ versioned_static('apple-touch-icon.png') }}">
+<meta name="theme-color" content="#0B1523">
+<link rel="stylesheet" href="{{ versioned_static('style.css') }}">
+<style>
+  .acct-field { margin-bottom: 12px; }
+  .acct-field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+  .acct-field input, .acct-field select { width: 100%; max-width: 360px; box-sizing: border-box; padding: 9px 11px; border: 1px solid var(--border, #26364d); border-radius: 6px; background: var(--panel2, #0f1a2b); color: var(--text, #e8eef5); font-size: 14px; }
+  .acct-msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .acct-msg.ok { color: var(--teal, #2dd4bf); }
+  .acct-msg.err { color: var(--coral, #ff7a6b); }
+  .acct-force { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--amber-bright, #f5b83d); border-radius: 8px; font-size: 13px; }
+  .acct-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .acct-table th, .acct-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border, #26364d); vertical-align: middle; }
+  .acct-table select { padding: 4px 6px; border-radius: 5px; border: 1px solid var(--border, #26364d); background: var(--panel2, #0f1a2b); color: var(--text, #e8eef5); }
+  .acct-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .acct-back { display: inline-block; margin-bottom: 14px; font-size: 13px; color: var(--teal, #2dd4bf); text-decoration: none; }
+  .muted-cell { color: var(--muted, #8fa0b6); }
+</style>
+</head>
+<body>
+
+<a class="acct-back" href="/">← Back to analysis</a>
+
+<h1>
+  <span class="title-col">
+    Account
+    <span class="sub">Signed in as <b>{{ current_user.username }}</b> ({{ current_user.role }}).</span>
+  </span>
+</h1>
+
+{% if force %}
+<div class="acct-force">You must choose a new password before you can continue.</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Change password</h2>
+  <form id="passwordForm" autocomplete="off">
+    <div class="acct-field"><label for="currentPassword">Current password</label>
+      <input id="currentPassword" type="password" autocomplete="current-password" required></div>
+    <div class="acct-field"><label for="newPassword">New password (at least 10 characters)</label>
+      <input id="newPassword" type="password" autocomplete="new-password" minlength="10" required></div>
+    <div class="acct-field"><label for="newPassword2">Repeat the new password</label>
+      <input id="newPassword2" type="password" autocomplete="new-password" minlength="10" required></div>
+    <button type="submit">Change password</button>
+    <div class="acct-msg" id="passwordMsg" role="status" aria-live="polite"></div>
+  </form>
+</div>
+
+{% if current_user.role == 'admin' %}
+<div class="panel">
+  <h2>Users</h2>
+  <div class="table-wrap">
+    <table class="acct-table">
+      <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody id="usersBody"></tbody>
+    </table>
+  </div>
+
+  <h2 style="margin-top:22px">Add a user</h2>
+  <form id="newUserForm" autocomplete="off">
+    <div class="acct-row">
+      <div class="acct-field"><label for="newUsername">Username</label>
+        <input id="newUsername" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required></div>
+      <div class="acct-field"><label for="newUserPassword">Temporary password</label>
+        <input id="newUserPassword" type="text" autocomplete="off" minlength="10" required></div>
+      <div class="acct-field"><label for="newUserRole">Role</label>
+        <select id="newUserRole"><option value="user">user</option><option value="admin">admin</option></select></div>
+      <div class="acct-field"><button type="submit">Add user</button></div>
+    </div>
+    <div class="muted-cell" style="font-size:12px">The user must change this password at the first sign-in.</div>
+    <div class="acct-msg" id="userMsg" role="status" aria-live="polite"></div>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Recent activity</h2>
+  <div class="table-wrap" style="max-height:320px">
+    <table class="acct-table">
+      <thead><tr><th>Time (UTC)</th><th>User</th><th>Action</th><th>Detail</th><th>IP</th></tr></thead>
+      <tbody id="auditBody"></tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<script>
+(function () {
+  const CSRF = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+  const IS_ADMIN = {{ 'true' if current_user.role == 'admin' else 'false' }};
+  const SELF = {{ current_user.username | tojson }};
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  }
+
+  async function api(url, method, body) {
+    const options = { method, headers: { "X-CSRF-Token": CSRF } };
+    if (body !== undefined) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    if (response.status === 401) { window.location.href = "/login?next=/account"; throw new Error("auth"); }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Request failed.");
+    return data;
+  }
+
+  function show(id, text, ok) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = "acct-msg " + (ok ? "ok" : "err");
+  }
+
+  // ---- change own password ----
+  document.getElementById("passwordForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const current = document.getElementById("currentPassword").value;
+    const next = document.getElementById("newPassword").value;
+    if (next !== document.getElementById("newPassword2").value) {
+      show("passwordMsg", "The new passwords do not match.", false);
+      return;
+    }
+    try {
+      await api("/api/auth/change_password", "POST", { current_password: current, new_password: next });
+      show("passwordMsg", "Password changed. Redirecting...", true);
+      setTimeout(() => { window.location.href = "/"; }, 900);
+    } catch (err) {
+      show("passwordMsg", err.message, false);
+    }
+  });
+
+  if (!IS_ADMIN) return;
+
+  // ---- users (administrators only) ----
+  async function loadUsers() {
+    const data = await api("/api/users", "GET");
+    document.getElementById("usersBody").innerHTML = data.users.map(u => {
+      const isSelf = u.username === SELF;
+      return `<tr>
+        <td>${escapeHtml(u.username)}${u.must_change_password ? ' <span class="muted-cell">(must change password)</span>' : ""}</td>
+        <td><select data-id="${u.id}" class="roleSel">
+              <option value="user"${u.role === "user" ? " selected" : ""}>user</option>
+              <option value="admin"${u.role === "admin" ? " selected" : ""}>admin</option></select></td>
+        <td>${u.is_active ? "active" : '<span class="muted-cell">disabled</span>'}</td>
+        <td class="muted-cell">${escapeHtml(u.last_login_at || "never")}</td>
+        <td>
+          <button class="secondary tiny resetBtn" data-id="${u.id}" data-name="${escapeHtml(u.username)}">Reset password</button>
+          <button class="secondary tiny activeBtn" data-id="${u.id}" data-active="${u.is_active ? "1" : "0"}"${isSelf ? " disabled title='You cannot disable your own account'" : ""}>${u.is_active ? "Disable" : "Enable"}</button>
+        </td></tr>`;
+    }).join("");
+  }
+
+  async function loadAudit() {
+    const data = await api("/api/audit?limit=50", "GET");
+    document.getElementById("auditBody").innerHTML = data.entries.map(e =>
+      `<tr><td class="muted-cell">${escapeHtml(e.at.replace("T", " "))}</td><td>${escapeHtml(e.username)}</td>` +
+      `<td>${escapeHtml(e.action)}</td><td class="muted-cell">${escapeHtml(e.detail)}</td><td class="muted-cell">${escapeHtml(e.ip)}</td></tr>`
+    ).join("");
+  }
+
+  document.getElementById("usersBody").addEventListener("change", async event => {
+    if (!event.target.classList.contains("roleSel")) return;
+    try {
+      await api(`/api/users/${event.target.dataset.id}/update`, "POST", { role: event.target.value });
+      show("userMsg", "Role updated.", true);
+    } catch (err) {
+      show("userMsg", err.message, false);
+    }
+    loadUsers(); loadAudit();
+  });
+
+  document.getElementById("usersBody").addEventListener("click", async event => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    try {
+      if (button.classList.contains("activeBtn")) {
+        await api(`/api/users/${button.dataset.id}/update`, "POST", { is_active: button.dataset.active !== "1" });
+        show("userMsg", "User updated.", true);
+      } else if (button.classList.contains("resetBtn")) {
+        const password = window.prompt(`Temporary password for "${button.dataset.name}" (at least 10 characters). The user must change it at the next sign-in.`);
+        if (!password) return;
+        await api(`/api/users/${button.dataset.id}/reset_password`, "POST", { password });
+        show("userMsg", "Password reset.", true);
+      } else {
+        return;
+      }
+    } catch (err) {
+      show("userMsg", err.message, false);
+    }
+    loadUsers(); loadAudit();
+  });
+
+  document.getElementById("newUserForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      await api("/api/users", "POST", {
+        username: document.getElementById("newUsername").value,
+        password: document.getElementById("newUserPassword").value,
+        role: document.getElementById("newUserRole").value,
+      });
+      show("userMsg", "User added.", true);
+      event.target.reset();
+    } catch (err) {
+      show("userMsg", err.message, false);
+    }
+    loadUsers(); loadAudit();
+  });
+
+  loadUsers();
+  loadAudit();
+})();
+</script>
+</body>
+</html>

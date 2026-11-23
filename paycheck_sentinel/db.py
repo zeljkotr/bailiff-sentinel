@@ -5,8 +5,12 @@ Connection settings come from environment variables (same pattern as REDIS_HOST)
     DB_HOST, DB_PORT (default 5432), DB_NAME (default bailiff),
     DB_USER (default bailiff), DB_PASSWORD (required)
 
+The database name and user intentionally keep the legacy name "bailiff": they are
+internal identifiers, and renaming them would require a database migration
+(Postgres only applies POSTGRES_DB/POSTGRES_USER when a volume is first created).
+
 All state that must be shared between instances (batches, transactions,
-false-alarm marks) lives here, so any bailiff instance can serve any request.
+false-alarm marks) lives here, so any instance can serve any request.
 
 Developed by Zeljko Tripcevski
 """
@@ -24,6 +28,22 @@ from psycopg.rows import dict_row
 SCHEMA_LOCK_ID = 727001
 INIT_RETRIES = 10
 INIT_RETRY_DELAY = 2  # seconds
+
+# Display labels of the flags, by flag type.
+# Flags are stored in transactions.flags_json together with their label. Batches analyzed
+# before the UI was translated to English still carry the old Serbian labels, so the label
+# is re-derived from the flag type whenever transactions are read (see _localize_flags).
+# NOTE: keep in sync with the labels in checks.py and the legend in static/app.js.
+FLAG_LABELS = {
+    "full": "FULL REFUND",
+    "partial": "PARTIAL",
+    "dupid": "DUP. ID",
+    "duppay": "DUP. PAYMENT",
+    "outlier": "OUTLIER",
+    "circular_confirmed": "REFUND (ref. number)",
+    "circular_possible": "POSSIBLE REFUND (amount)",
+    "transfer": "TRANSFER A→B",
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS batches (
@@ -100,8 +120,8 @@ def init_db():
     """Create the schema if it does not exist.
 
     Retries while the database is still starting (containers may boot in any
-    order) and takes an advisory lock so that bailiff-1/2/3 starting at the
-    same time do not race on CREATE TABLE.
+    order) and takes an advisory lock so that several app instances starting at
+    the same time do not race on CREATE TABLE.
     """
     for attempt in range(1, INIT_RETRIES + 1):
         try:
@@ -117,6 +137,18 @@ def init_db():
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _localize_flags(flags):
+    """Return the flags with their label re-derived from the flag type.
+
+    Unknown flag types keep whatever label they were stored with.
+    """
+    result = []
+    for flag in flags:
+        label = FLAG_LABELS.get(flag.get("type"), flag.get("label"))
+        result.append({**flag, "label": label})
+    return result
 
 
 def create_batch(conn, label, file_names, columns, rows, own_account=None):
@@ -167,7 +199,7 @@ def get_transactions(conn, batch_id):
             "raw": raw,
             "paid_amount": r["paid_amount"],
             "returned_amount": r["returned_amount"],
-            "flags": json.loads(r["flags_json"]),
+            "flags": _localize_flags(json.loads(r["flags_json"])),
             "is_false_alarm": bool(r["is_false_alarm"]),
         })
     return result

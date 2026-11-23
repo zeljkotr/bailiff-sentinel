@@ -1,8 +1,11 @@
 """
-checks.py — logika provera nad transakcijama.
+checks.py — transaction check logic.
 
-Svaka funkcija prima listu transakcija (dict sa 'raw', 'paid_amount', 'returned_amount')
-i mapiranje kolona, i dodaje flagove u transakciju['flags'] (list of dict {type, label}).
+Each function takes a list of transactions (dicts with 'raw', 'paid_amount', 'returned_amount')
+and a column mapping, and adds flags to transaction['flags'] (list of dicts {type, label}).
+
+NOTE: the flag labels defined here are also shown in the legend in static/app.js
+(renderResults), so they must be kept in sync with it.
 
 Developed by Zeljko Tripcevski
 """
@@ -13,7 +16,7 @@ from datetime import datetime
 
 
 def parse_amount(text):
-    """Parsira iznos iz teksta, podrzava srpski format (1.234,56) i standardni (1234.56)."""
+    """Parses an amount from text, supports the Serbian format (1.234,56) and the standard one (1234.56)."""
     if text is None:
         return None
     t = str(text).strip()
@@ -41,7 +44,7 @@ def normalize_text(s):
 
 
 def parse_datetime_loose(text):
-    """Pokusaj da parsira datum/vreme iz razlicitih formata (ISO, sa/bez vremena)."""
+    """Tries to parse a date/time from various formats (ISO, with/without time)."""
     if not text:
         return None
     t = str(text).strip()
@@ -50,7 +53,7 @@ def parse_datetime_loose(text):
             return datetime.strptime(t[:len(fmt.replace("%", "")) + 10], fmt)
         except ValueError:
             continue
-    # probaj samo prvih 10 karaktera (YYYY-MM-DD) kao fallback
+    # try only the first 10 characters (YYYY-MM-DD) as a fallback
     try:
         return datetime.strptime(t[:10], "%Y-%m-%d")
     except ValueError:
@@ -59,20 +62,21 @@ def parse_datetime_loose(text):
 
 def analyze_circular_refund(rows, mapping, options):
     """
-    Specificna provera za bankovne izvode (npr. iBank format) gde je jedna
-    kolona iznos (trnamt), a smer transakcije (odliv/priliv) je u posebnoj
-    koloni ('benefit': debit/credit).
+    Specific check for bank statements (e.g. the iBank format) where one
+    column holds the amount (trnamt) and the direction of the transaction
+    (outflow/inflow) is in a separate column ('benefit': debit/credit).
 
-    Otkriva "kruzni povrat": odliv (debit) sa racuna, pa priliv (credit)
-    istog iznosa nazad na isti racun (isti izvod = isti vlasnik racuna).
+    Detects a "circular refund": an outflow (debit) from an account, followed by
+    an inflow (credit) of the same amount back to the same account
+    (same statement = same account owner).
 
-    Uparivanje:
-      1. Po 'refnumber' koloni (ako je mapirana) + istom iznosu — pouzdano,
-         jer banka cesto koristi isti referentni broj za original i povracaj.
-      2. Fallback: po istom iznosu + datumu unutar 'max_days_gap' dana —
-         manje pouzdano, oznaceno drugom labelom.
+    Matching:
+      1. By the 'refnumber' column (if mapped) + the same amount — reliable,
+         because the bank often uses the same reference number for the original and the refund.
+      2. Fallback: by the same amount + date within 'max_days_gap' days —
+         less reliable, marked with a different label.
 
-    mapping: amount_col, benefit_col, ref_col (opciono), date_col (opciono)
+    mapping: amount_col, benefit_col, ref_col (optional), date_col (optional)
     options: debit_value (default 'debit'), credit_value (default 'credit'),
              max_days_gap (default 30), require_refnumber (bool)
     """
@@ -108,7 +112,7 @@ def analyze_circular_refund(rows, mapping, options):
 
     matched_credit_idx = set()
 
-    # 1. Uparivanje po refnumber + iznos (pouzdano)
+    # 1. Matching by refnumber + amount (reliable)
     if ref_col:
         for d in debits:
             if not d["ref"]:
@@ -117,12 +121,12 @@ def analyze_circular_refund(rows, mapping, options):
                 if c["idx"] in matched_credit_idx:
                     continue
                 if c["ref"] == d["ref"] and abs(c["amount"] - d["amount"]) < 0.01:
-                    d["flags"].append({"type": "circular_confirmed", "label": "POVRAT (ref. broj)"})
-                    c["flags"].append({"type": "circular_confirmed", "label": "POVRAT (ref. broj)"})
+                    d["flags"].append({"type": "circular_confirmed", "label": "REFUND (ref. number)"})
+                    c["flags"].append({"type": "circular_confirmed", "label": "REFUND (ref. number)"})
                     matched_credit_idx.add(c["idx"])
                     break
 
-    # 2. Fallback: samo iznos + blizina datuma (manje pouzdano)
+    # 2. Fallback: amount only + date proximity (less reliable)
     if not require_refnumber:
         for d in debits:
             if any(f["type"] == "circular_confirmed" for f in d["flags"]):
@@ -139,10 +143,10 @@ def analyze_circular_refund(rows, mapping, options):
                     if gap_days > max_days_gap:
                         continue
                 elif date_col:
-                    # datum kolona mapirana ali nije parsirana kod jednog od njih - preskoci fallback
+                    # the date column is mapped but could not be parsed for one of them - skip the fallback
                     continue
-                d["flags"].append({"type": "circular_possible", "label": "MOGUĆ POVRAT (iznos)"})
-                c["flags"].append({"type": "circular_possible", "label": "MOGUĆ POVRAT (iznos)"})
+                d["flags"].append({"type": "circular_possible", "label": "POSSIBLE REFUND (amount)"})
+                c["flags"].append({"type": "circular_possible", "label": "POSSIBLE REFUND (amount)"})
                 matched_credit_idx.add(c["idx"])
                 break
 
@@ -151,15 +155,15 @@ def analyze_circular_refund(rows, mapping, options):
 
 def analyze_transfer(rows, mapping, options):
     """
-    Obelezava redove koji predstavljaju transfer sa konkretnog racuna
-    (from_col == account_from) na konkretan racun (to_col == account_to).
-    Koristi se kad korisnik zeli da izdvoji sve uplate izmedju tacno
-    dva odredjena racuna iz velikog XML izvoda.
+    Flags rows that represent a transfer from a specific account
+    (from_col == account_from) to a specific account (to_col == account_to).
+    Used when the user wants to pull out all payments between exactly
+    two given accounts from a large XML statement.
 
-    mapping: from_col, to_col (obavezni), amount_col, date_col (opciono - za prikaz/sumu)
-    options: account_from, account_to — bar jedan mora biti popunjen;
-             poredjenje je normalizovano (bez razmaka/crtica, case-insensitive)
-             da bi radilo bez obzira na format upisa broja racuna.
+    mapping: from_col, to_col (required), amount_col, date_col (optional - for display/sum)
+    options: account_from, account_to — at least one must be filled in;
+             the comparison is normalized (no spaces/dashes, case-insensitive)
+             so it works regardless of how the account number is typed.
     """
     from_col = mapping.get("from_col")
     to_col = mapping.get("to_col")
@@ -193,13 +197,13 @@ def analyze_transfer(rows, mapping, options):
 
 def analyze(rows, mapping, options):
     """
-    rows: list[dict] — sirovi redovi (kljucevi su imena kolona iz XML-a, plus '__source_file')
-    mapping: dict sa kljucevima paid_col, returned_col, id_col, debtor_col, date_col
-             (id_col/debtor_col/date_col mogu biti None ako nisu mapirani)
-    options: dict sa kljucevima tolerance, outlier_multiplier,
+    rows: list[dict] — raw rows (keys are column names from the XML, plus '__source_file')
+    mapping: dict with keys paid_col, returned_col, id_col, debtor_col, date_col
+             (id_col/debtor_col/date_col can be None if they are not mapped)
+    options: dict with keys tolerance, outlier_multiplier,
              check_full, check_partial, check_dupid, check_duppay, check_outlier
 
-    Vraca listu transakcija: [{idx, raw, paid_amount, returned_amount, flags: [...]}]
+    Returns a list of transactions: [{idx, raw, paid_amount, returned_amount, flags: [...]}]
     """
     paid_col = mapping.get("paid_col")
     returned_col = mapping.get("returned_col")
@@ -228,24 +232,24 @@ def analyze(rows, mapping, options):
             "flags": [],
         })
 
-    # 1. Pun povrat
+    # 1. Full refund
     if do_full:
         for t in txns:
             p, r = t["paid_amount"], t["returned_amount"]
             if p is not None and r is not None and p != 0 and r != 0:
                 if abs(p - r) <= tolerance:
-                    t["flags"].append({"type": "full", "label": "PUN POVRAT"})
+                    t["flags"].append({"type": "full", "label": "FULL REFUND"})
 
-    # 2. Delimican povrat
+    # 2. Partial refund
     if do_partial:
         for t in txns:
             p, r = t["paid_amount"], t["returned_amount"]
             if p is not None and r is not None and p > 0 and r > 0:
                 is_full = abs(p - r) <= tolerance
                 if not is_full and r < p:
-                    t["flags"].append({"type": "partial", "label": "DELIMIČAN"})
+                    t["flags"].append({"type": "partial", "label": "PARTIAL"})
 
-    # 3. Duplikat ID-ja
+    # 3. Duplicate ID
     if do_dupid:
         groups = {}
         for t in txns:
@@ -258,7 +262,7 @@ def analyze(rows, mapping, options):
                 for t in group:
                     t["flags"].append({"type": "dupid", "label": "DUP. ID"})
 
-    # 4. Duplikat uplate (isti duznik + isti iznos + isti datum)
+    # 4. Duplicate payment (same debtor + same amount + same date)
     if do_duppay:
         groups = {}
         for t in txns:
@@ -273,9 +277,9 @@ def analyze(rows, mapping, options):
         for group in groups.values():
             if len(group) > 1:
                 for t in group:
-                    t["flags"].append({"type": "duppay", "label": "DUP. UPLATA"})
+                    t["flags"].append({"type": "duppay", "label": "DUP. PAYMENT"})
 
-    # 5. Statisticki outlier
+    # 5. Statistical outlier
     if do_outlier:
         amounts = [t["paid_amount"] for t in txns if t["paid_amount"] and t["paid_amount"] > 0]
         if amounts:

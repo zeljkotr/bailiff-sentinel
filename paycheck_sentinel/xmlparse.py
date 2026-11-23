@@ -1,9 +1,9 @@
 """
-xmlparse.py — auto-detekcija ponavljajucih redova i kolona u XML fajlu.
+xmlparse.py — auto-detection of repeating rows and columns in an XML file.
 
-Ideja: umesto da ocekujemo fiksnu semu, pronadjemo tag koji se najvise puta
-ponavlja u dokumentu i koji ima dete-elemente (znaci da nosi kolone podataka).
-To tretiramo kao "red" tabele, a njegovi direktni dete-tagovi su kolone.
+Idea: instead of expecting a fixed schema, we find the tag that repeats the most
+in the document and has child elements (meaning it carries data columns).
+We treat it as a table "row", and its direct child tags are the columns.
 
 Developed by Zeljko Tripcevski
 """
@@ -17,7 +17,7 @@ class XMLParseError(Exception):
 
 
 def _local_tag(tag: str) -> str:
-    """Ukloni XML namespace prefiks ako postoji, npr '{ns}Row' -> 'Row'."""
+    """Removes the XML namespace prefix if present, e.g. '{ns}Row' -> 'Row'."""
     if "}" in tag:
         return tag.split("}", 1)[1]
     return tag
@@ -25,9 +25,9 @@ def _local_tag(tag: str) -> str:
 
 def _flatten_row(row_el, prefix=""):
     """
-    Rekurzivno spljosti red u ravan recnik kolona.
-    Ugnjezdeni tagovi dobijaju imena tipa 'payeeaccountinfo.acctid'.
-    Ako tag ima i tekst i decu (retko), tekst se ignorise u korist dece.
+    Recursively flattens a row into a flat dictionary of columns.
+    Nested tags get names like 'payeeaccountinfo.acctid'.
+    If a tag has both text and children (rare), the text is ignored in favor of the children.
     """
     result = {}
     for child in row_el:
@@ -42,9 +42,9 @@ def _flatten_row(row_el, prefix=""):
 
 def find_own_account(root):
     """
-    Pokusaj da pronadje 'racun vlasnika izvoda' — specificno za iBank izvoze
-    (stmtrs/acctid na nivou izvoda, pre liste transakcija). Vraca None ako
-    ne prepoznaje ovaj format.
+    Tries to find the "statement owner account" — specific to iBank exports
+    (stmtrs/acctid at the statement level, before the list of transactions).
+    Returns None if this format is not recognized.
     """
     stmtrs = root.find(".//stmtrs")
     if stmtrs is not None:
@@ -55,7 +55,7 @@ def find_own_account(root):
 
 
 def _walk_with_depth(el, depth=0):
-    """Rekurzivno prolazi kroz stablo, vracajuci (element, dubina) parove."""
+    """Recursively walks the tree, yielding (element, depth) pairs."""
     yield el, depth
     for child in el:
         yield from _walk_with_depth(child, depth + 1)
@@ -63,18 +63,18 @@ def _walk_with_depth(el, depth=0):
 
 def parse_xml_text(xml_text: str):
     """
-    Vraca (rows, columns, own_account):
-      rows: list[dict[str, str]] — svaki red kao recnik kolona (ugnjezdeni
-            tagovi spljosteni u 'roditelj.dete' notaciju)
-      columns: list[str] — redosled kolona po prvom pojavljivanju
-      own_account: str | None — racun vlasnika izvoda ako je prepoznat
-                    (specificno za iBank format), inace None
-    Baca XMLParseError ako fajl nije validan ili ne mozemo da prepoznamo strukturu.
+    Returns (rows, columns, own_account):
+      rows: list[dict[str, str]] — each row as a dictionary of columns (nested
+            tags flattened into 'parent.child' notation)
+      columns: list[str] — column order by first appearance
+      own_account: str | None — statement owner account if recognized
+                    (specific to the iBank format), otherwise None
+    Raises XMLParseError if the file is not valid or the structure cannot be recognized.
     """
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
-        raise XMLParseError(f"XML nije validan: {e}")
+        raise XMLParseError(f"XML is not valid: {e}")
 
     own_account = find_own_account(root)
 
@@ -86,8 +86,8 @@ def parse_xml_text(xml_text: str):
     best_tag = None
     best_count = 0
 
-    # 1. prolaz: tag koji se ponavlja vise puta u celom dokumentu i nosi kolone
-    #    (najpouzdaniji signal - klasican slucaj vise transakcija u fajlu)
+    # Pass 1: a tag that repeats more than once in the whole document and carries columns
+    #    (the most reliable signal - the classic case of several transactions in a file)
     for el in all_elements:
         tag = _local_tag(el.tag)
         if freq[tag] > 1 and len(list(el)) > 0:
@@ -95,12 +95,12 @@ def parse_xml_text(xml_text: str):
                 best_count = freq[tag]
                 best_tag = tag
 
-    # 2. prolaz (fallback): fajl moze imati samo JEDNU transakciju (npr. mali
-    #    izvod za jedan konkretan predmet/nalog), pa nijedan tag nema freq>1.
-    #    Tada trazimo "homogen kontejner" — element ciji su SVI deca isti tag
-    #    (makar i samo jedno dete), sto je znak da je taj tag po prirodi red
-    #    liste. Biramo najdublji/najspecificniji takav tag (npr. stmttrn unutar
-    #    banktranlist, a ne stmtrs unutar stmtrslist).
+    # Pass 2 (fallback): the file may contain only ONE transaction (e.g. a small
+    #    statement for one specific case/order), so no tag has freq>1.
+    #    In that case we look for a "homogeneous container" — an element whose
+    #    children are ALL the same tag (even if there is only one child), which is a
+    #    sign that this tag is by nature a list row. We pick the deepest/most specific
+    #    such tag (e.g. stmttrn inside banktranlist, not stmtrs inside stmtrslist).
     if best_tag is None:
         candidates = []
         for parent, depth in elements_with_depth:
@@ -115,7 +115,7 @@ def parse_xml_text(xml_text: str):
             best_tag = candidates[0][0]
 
     if best_tag is None:
-        raise XMLParseError("Nisam uspeo da prepoznam ponavljajuce redove u XML-u.")
+        raise XMLParseError("Could not recognize any repeating rows in the XML.")
 
     row_elements = [el for el in all_elements if _local_tag(el.tag) == best_tag]
 
@@ -132,6 +132,6 @@ def parse_xml_text(xml_text: str):
         rows.append(row)
 
     if not rows:
-        raise XMLParseError(f"Pronadjeni su redovi ('{best_tag}') ali nemaju kolone.")
+        raise XMLParseError(f"Rows were found ('{best_tag}') but they have no columns.")
 
     return rows, columns, own_account
